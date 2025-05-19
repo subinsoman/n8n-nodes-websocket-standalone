@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-websocket",
-  "version": "1.1.4",
+  "version": "2.0.0",
   "description": "n8n WebSocket nodes with workflow-based paths",
   "keywords": [
     "n8n-community-node-package",
