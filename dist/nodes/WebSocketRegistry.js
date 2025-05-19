@@ -8,8 +8,10 @@ const ws_1 = __importDefault(require("ws"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
+const http_1 = __importDefault(require("http"));
 class WebSocketRegistry {
     constructor() {
+        this.N8N_PORT = 5678;
         this.servers = new Map();
         this.registryPath = path_1.default.join(os_1.default.tmpdir(), 'n8n-websocket-registry.json');
         this.loadRegistry();
@@ -27,7 +29,6 @@ class WebSocketRegistry {
                 Object.entries(data).forEach(([serverId, serverInfo]) => {
                     if (!this.servers.has(serverId)) {
                         this.createServer(serverId, {
-                            port: serverInfo.port,
                             path: serverInfo.path,
                         });
                     }
@@ -42,14 +43,10 @@ class WebSocketRegistry {
         try {
             const data = {};
             this.servers.forEach(({ wss, clients }, serverId) => {
-                const address = wss.address();
-                if (address && typeof address === 'object') {
-                    data[serverId] = {
-                        port: address.port,
-                        path: wss.options.path,
-                        clients: clients,
-                    };
-                }
+                data[serverId] = {
+                    path: wss.options.path,
+                    clients: clients,
+                };
             });
             fs_1.default.writeFileSync(this.registryPath, JSON.stringify(data, null, 2));
         }
@@ -57,9 +54,49 @@ class WebSocketRegistry {
             console.error('[DEBUG] Error saving registry:', error);
         }
     }
+    async findN8nServer() {
+        return new Promise((resolve) => {
+            const testSocket = new ws_1.default(`ws://localhost:${this.N8N_PORT}`);
+            testSocket.on('error', () => {
+                resolve(undefined);
+                testSocket.close();
+            });
+            testSocket.on('open', () => {
+                resolve(http_1.default.createServer());
+                testSocket.close();
+            });
+        });
+    }
     createServer(serverId, config) {
-        const wss = new ws_1.default.Server(config);
+        console.error(`[DEBUG] Creating WebSocket server on n8n port ${this.N8N_PORT} with path ${config.path}`);
+        const wss = new ws_1.default.Server({
+            port: this.N8N_PORT,
+            path: config.path,
+            noServer: true
+        });
         const clients = new Map();
+        const handleUpgrade = async (request, socket, head) => {
+            if (request.url === config.path) {
+                wss.handleUpgrade(request, socket, head, (ws) => {
+                    wss.emit('connection', ws, request);
+                });
+            }
+        };
+        this.findN8nServer().then((server) => {
+            if (server) {
+                server.on('upgrade', handleUpgrade);
+                console.error(`[DEBUG] WebSocket server attached to n8n server on port ${this.N8N_PORT}`);
+            }
+            else {
+                console.error(`[DEBUG] Could not find n8n server, creating standalone WebSocket server`);
+                const standaloneWss = new ws_1.default.Server({
+                    port: this.N8N_PORT,
+                    path: config.path
+                });
+                wss.clients = standaloneWss.clients;
+                wss.options = standaloneWss.options;
+            }
+        });
         wss.on('connection', (ws) => {
             const clientId = Math.random().toString(36).substring(2, 8);
             clients.set(clientId, ws);
@@ -131,14 +168,11 @@ class WebSocketRegistry {
         this.loadRegistry();
         console.error('=== Available WebSocket Servers ===');
         this.servers.forEach(({ wss, clients }, serverId) => {
-            const address = wss.address();
-            if (address && typeof address === 'object') {
-                console.error(`Server ID: ${serverId}`);
-                console.error(`Port: ${address.port}`);
-                console.error(`Path: ${wss.options.path}`);
-                console.error(`Active Clients: ${clients.size}`);
-                this.listClients(serverId);
-            }
+            console.error(`Server ID: ${serverId}`);
+            console.error(`Port: ${this.N8N_PORT}`);
+            console.error(`Path: ${wss.options.path}`);
+            console.error(`Active Clients: ${clients.size}`);
+            this.listClients(serverId);
         });
         console.error('================================');
     }

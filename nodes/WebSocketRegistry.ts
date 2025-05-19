@@ -2,15 +2,14 @@ import WebSocket from 'ws';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import http from 'http';
 
 interface IServerInfo {
-	port: number;
 	path: string;
 	clients: Map<string, WebSocket>;
 }
 
 interface IServerConfig {
-	port: number;
 	path: string;
 }
 
@@ -18,6 +17,7 @@ export class WebSocketRegistry {
 	private static instance: WebSocketRegistry;
 	private servers: Map<string, { wss: WebSocket.Server; clients: Map<string, WebSocket> }>;
 	private readonly registryPath: string;
+	private readonly N8N_PORT = 5678;
 
 	private constructor() {
 		this.servers = new Map();
@@ -40,7 +40,6 @@ export class WebSocketRegistry {
 				Object.entries(data).forEach(([serverId, serverInfo]) => {
 					if (!this.servers.has(serverId)) {
 						this.createServer(serverId, {
-							port: serverInfo.port,
 							path: serverInfo.path,
 						});
 					}
@@ -55,14 +54,10 @@ export class WebSocketRegistry {
 		try {
 			const data: { [key: string]: IServerInfo } = {};
 			this.servers.forEach(({ wss, clients }, serverId) => {
-				const address = wss.address();
-				if (address && typeof address === 'object') {
-					data[serverId] = {
-						port: address.port,
-						path: wss.options.path as string,
-						clients: clients,
-					};
-				}
+				data[serverId] = {
+					path: wss.options.path as string,
+					clients: clients,
+				};
 			});
 			fs.writeFileSync(this.registryPath, JSON.stringify(data, null, 2));
 		} catch (error) {
@@ -70,9 +65,60 @@ export class WebSocketRegistry {
 		}
 	}
 
+	private async findN8nServer(): Promise<http.Server | undefined> {
+		return new Promise((resolve) => {
+			// Try to connect to n8n server
+			const testSocket = new WebSocket(`ws://localhost:${this.N8N_PORT}`);
+			
+			testSocket.on('error', () => {
+				resolve(undefined);
+				testSocket.close();
+			});
+
+			testSocket.on('open', () => {
+				// If we can connect, n8n server is running
+				resolve(http.createServer()); // Create a dummy server object
+				testSocket.close();
+			});
+		});
+	}
+
 	private createServer(serverId: string, config: IServerConfig) {
-		const wss = new WebSocket.Server(config);
+		console.error(`[DEBUG] Creating WebSocket server on n8n port ${this.N8N_PORT} with path ${config.path}`);
+		
+		const wss = new WebSocket.Server({ 
+			port: this.N8N_PORT,
+			path: config.path,
+			noServer: true // Important: Don't create a new server
+		});
+
 		const clients = new Map<string, WebSocket>();
+
+		// Handle upgrade requests
+		const handleUpgrade = async (request: http.IncomingMessage, socket: any, head: Buffer) => {
+			if (request.url === config.path) {
+				wss.handleUpgrade(request, socket, head, (ws) => {
+					wss.emit('connection', ws, request);
+				});
+			}
+		};
+
+		// Try to find n8n's server
+		this.findN8nServer().then((server) => {
+			if (server) {
+				server.on('upgrade', handleUpgrade);
+				console.error(`[DEBUG] WebSocket server attached to n8n server on port ${this.N8N_PORT}`);
+			} else {
+				console.error(`[DEBUG] Could not find n8n server, creating standalone WebSocket server`);
+				// Fallback to standalone server
+				const standaloneWss = new WebSocket.Server({ 
+					port: this.N8N_PORT,
+					path: config.path
+				});
+				wss.clients = standaloneWss.clients;
+				wss.options = standaloneWss.options;
+			}
+		});
 
 		wss.on('connection', (ws: WebSocket) => {
 			const clientId = Math.random().toString(36).substring(2, 8);
@@ -159,14 +205,11 @@ export class WebSocketRegistry {
 		
 		console.error('=== Available WebSocket Servers ===');
 		this.servers.forEach(({ wss, clients }, serverId) => {
-			const address = wss.address();
-			if (address && typeof address === 'object') {
-				console.error(`Server ID: ${serverId}`);
-				console.error(`Port: ${address.port}`);
-				console.error(`Path: ${wss.options.path}`);
-				console.error(`Active Clients: ${clients.size}`);
-				this.listClients(serverId);
-			}
+			console.error(`Server ID: ${serverId}`);
+			console.error(`Port: ${this.N8N_PORT}`);
+			console.error(`Path: ${wss.options.path}`);
+			console.error(`Active Clients: ${clients.size}`);
+			this.listClients(serverId);
 		});
 		console.error('================================');
 	}

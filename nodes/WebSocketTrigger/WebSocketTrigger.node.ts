@@ -22,31 +22,31 @@ export class WebSocketTrigger implements INodeType {
 		outputs: ['main'],
 		properties: [
 			{
-				displayName: 'Path',
-				name: 'path',
-				type: 'string',
-				default: '/ws',
-				required: true,
-				description: 'The WebSocket server path',
-			},
-			{
-				displayName: 'Port',
-				name: 'port',
-				type: 'number',
-				default: 5680,
-				required: true,
-				description: 'The port to listen on',
+				displayName: 'Info',
+				name: 'info',
+				type: 'notice',
+				default: '',
+				displayOptions: {
+					show: {
+						'@version': [1],
+					},
+				},
+				options: [
+					{
+						name: 'info',
+						value: 'The WebSocket server will be available at: ws://localhost:5678/workflow/{workflowId}',
+					},
+				],
 			},
 		],
 	};
 
 	async trigger(this: ITriggerFunctions): Promise<ITriggerResponse> {
-		const nodeParameters = this.getNode().parameters as INodeParameters;
-		const path = nodeParameters.path as string;
-		const port = nodeParameters.port as number;
+		const workflowId = this.getWorkflow().id;
+		const path = `/workflow/${workflowId}`;
 		
 		// Generate server ID with the exact format expected by the response node
-		const serverId = `ws-${port}`;
+		const serverId = `ws-${workflowId}`;
 		console.error(`[DEBUG] Creating WebSocket server with ID: ${serverId}`);
 
 		const registry = WebSocketRegistry.getInstance();
@@ -54,10 +54,10 @@ export class WebSocketTrigger implements INodeType {
 		registry.listServers();
 
 		try {
-			// Close any existing server on this port to avoid conflicts
+			// Close any existing server for this workflow
 			await registry.closeServer(serverId);
 			
-			const wss = await registry.getOrCreateServer(serverId, { port, path });
+			const wss = await registry.getOrCreateServer(serverId, { path });
 			console.error(`[DEBUG] WebSocket server created/retrieved successfully`);
 
 			const executeTrigger = async (data: any) => {
@@ -67,7 +67,6 @@ export class WebSocketTrigger implements INodeType {
 						...data, 
 						serverId,
 						path,
-						port,
 						clientId: data.clientId,
 					};
 					
