@@ -74,14 +74,7 @@ export class WebSocketResponse implements INodeType {
 					console.error(`[DEBUG] Current WebSocket Servers ===`);
 					registry.listServers();
 
-					const server = registry.getServer(serverId);
-					if (!server) {
-						lastError = new Error(`WebSocket server ${serverId} not found`);
-						console.error(`[DEBUG] Server not found on attempt ${attempt + 1}`);
-						continue;
-					}
-
-					const client = server.clients.get(clientId);
+					const client = registry.getClient(serverId, clientId);
 					if (!client) {
 						lastError = new Error(`WebSocket client ${clientId} not found on server ${serverId}`);
 						console.error(`[DEBUG] Client not found on attempt ${attempt + 1}`);
@@ -91,10 +84,10 @@ export class WebSocketResponse implements INodeType {
 					// Send the response
 					const response = typeof responseData === 'object' ? JSON.stringify(responseData) : responseData;
 					await new Promise<void>((resolve, reject) => {
-						client.send(response, (error) => {
-							if (error) {
-								console.error(`[DEBUG] Error sending response on attempt ${attempt + 1}:`, error);
-								reject(error);
+						client.send(response, (err?: Error) => {
+							if (err) {
+								console.error(`[DEBUG] Error sending response on attempt ${attempt + 1}:`, err);
+								reject(err);
 							} else {
 								resolve();
 							}

@@ -1,32 +1,22 @@
-import * as WebSocket from 'ws';
-import * as http from 'http';
-export interface WebSocketClient extends WebSocket {
-    id: string;
-    isAlive: boolean;
-}
-interface ServerConfig {
+import WebSocket from 'ws';
+interface IServerConfig {
     port: number;
     path: string;
-}
-interface ServerInstance {
-    server: http.Server;
-    wss: WebSocket.Server;
-    clients: Map<string, WebSocketClient>;
-    config: ServerConfig;
-    heartbeat?: NodeJS.Timeout;
 }
 export declare class WebSocketRegistry {
     private static instance;
     private servers;
-    private initializationPromise;
+    private readonly registryPath;
     private constructor();
-    private cleanup;
     static getInstance(): WebSocketRegistry;
-    private initialize;
-    listServers(): void;
-    getOrCreateServer(serverId: string, config: ServerConfig): Promise<WebSocket.Server>;
+    private loadRegistry;
+    private saveRegistry;
+    private createServer;
+    getOrCreateServer(serverId: string, config: IServerConfig): Promise<WebSocket.Server>;
+    getServer(serverId: string): WebSocket.Server | undefined;
+    getClient(serverId: string, clientId: string): WebSocket | undefined;
     closeServer(serverId: string): Promise<void>;
-    getServer(serverId: string): ServerInstance | undefined;
-    removeServer(serverId: string): void;
+    listServers(): void;
+    private listClients;
 }
 export {};
