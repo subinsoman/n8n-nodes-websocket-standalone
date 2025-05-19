@@ -99,11 +99,14 @@ export class WebSocketTrigger implements INodeType {
 
 		try {
 			// Close any existing server on this port
-			await registry.closeServer(serverId);
+			await registry.closeServer(serverId, { keepClientsAlive: true });
 			
 			// Create or get server
 			const wss = await registry.getOrCreateServer(serverId, { port, path });
 			console.error(`[DEBUG-TRIGGER] WebSocket server created/retrieved successfully`);
+			
+			// Register this execution with the server to prevent premature closing
+			registry.registerExecution(serverId, executionId);
 			
 			// Store in context
 			context.servers[serverId] = { 
@@ -148,6 +151,15 @@ export class WebSocketTrigger implements INodeType {
 
 			// Store a reference to the ITriggerFunctions instance for closeFunction to use
 			const self = this;
+			const isManualTrigger = !!this.getNodeParameter('manualTrigger', false);
+
+			// Mark if this is the first execution of this node
+			if (!context.executionCounts) {
+				context.executionCounts = {};
+			}
+			context.executionCounts[serverId] = (context.executionCounts[serverId] || 0) + 1;
+			const executionCount = context.executionCounts[serverId];
+			console.error(`[DEBUG-TRIGGER] Execution count for server ${serverId}: ${executionCount}`);
 
 			async function closeFunction() {
 				console.error(`[DEBUG-TRIGGER] Closing WebSocket server with ID: ${serverId}`);
@@ -157,18 +169,23 @@ export class WebSocketTrigger implements INodeType {
 					context.servers[serverId].active = false;
 				}
 				
-				// Check if this is a final workflow cleanup (deactivation/deletion)
-				// This check isn't fully reliable, but helps prevent closing in most normal executions
-				const isWorkflowEnd = self.getWorkflow !== undefined;
-				console.error(`[DEBUG-TRIGGER] Is workflow end: ${isWorkflowEnd}`);
+				// Unregister this execution
+				registry.unregisterExecution(serverId, executionId);
 				
-				if (isWorkflowEnd) {
-					// Only fully close the server if the workflow is being deactivated/deleted
-					await registry.closeServer(serverId);
+				// FIXED DETECTION LOGIC: 
+				// For n8n, we can't reliable detect workflow end vs execution end
+				// So we'll always use soft close to ensure connections stay open for response nodes
+				// This is safe because proper cleanup will happen on n8n shutdown
+				const forceSoftClose = true; // Always use soft close to keep connections
+				console.error(`[DEBUG-TRIGGER] Using soft close: ${forceSoftClose}`);
+				
+				if (!forceSoftClose) {
+					// This branch is now effectively disabled, but kept for reference
+					await registry.closeServer(serverId, { executionId });
 					console.error(`[DEBUG-TRIGGER] Fully closed server due to workflow deactivation/deletion`);
 				} else {
-					// For normal execution completion, use soft close to keep clients alive
-					await registry.closeServer(serverId, { keepClientsAlive: true });
+					// Always use soft close to keep clients alive
+					await registry.closeServer(serverId, { keepClientsAlive: true, executionId });
 					console.error(`[DEBUG-TRIGGER] Soft-closed server to keep connections open for response nodes`);
 				}
 			}

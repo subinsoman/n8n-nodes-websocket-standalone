@@ -84,9 +84,10 @@ class WebSocketTrigger {
         console.error(`[DEBUG-TRIGGER] Current WebSocket Servers (Before Creation) ===`);
         registry.listServers();
         try {
-            await registry.closeServer(serverId);
+            await registry.closeServer(serverId, { keepClientsAlive: true });
             const wss = await registry.getOrCreateServer(serverId, { port, path });
             console.error(`[DEBUG-TRIGGER] WebSocket server created/retrieved successfully`);
+            registry.registerExecution(serverId, executionId);
             context.servers[serverId] = {
                 serverId,
                 port,
@@ -121,19 +122,27 @@ class WebSocketTrigger {
                 throw new Error(`Failed to verify server ${serverId} is running`);
             }
             const self = this;
+            const isManualTrigger = !!this.getNodeParameter('manualTrigger', false);
+            if (!context.executionCounts) {
+                context.executionCounts = {};
+            }
+            context.executionCounts[serverId] = (context.executionCounts[serverId] || 0) + 1;
+            const executionCount = context.executionCounts[serverId];
+            console.error(`[DEBUG-TRIGGER] Execution count for server ${serverId}: ${executionCount}`);
             async function closeFunction() {
                 console.error(`[DEBUG-TRIGGER] Closing WebSocket server with ID: ${serverId}`);
                 if (context.servers && context.servers[serverId]) {
                     context.servers[serverId].active = false;
                 }
-                const isWorkflowEnd = self.getWorkflow !== undefined;
-                console.error(`[DEBUG-TRIGGER] Is workflow end: ${isWorkflowEnd}`);
-                if (isWorkflowEnd) {
-                    await registry.closeServer(serverId);
+                registry.unregisterExecution(serverId, executionId);
+                const forceSoftClose = true;
+                console.error(`[DEBUG-TRIGGER] Using soft close: ${forceSoftClose}`);
+                if (!forceSoftClose) {
+                    await registry.closeServer(serverId, { executionId });
                     console.error(`[DEBUG-TRIGGER] Fully closed server due to workflow deactivation/deletion`);
                 }
                 else {
-                    await registry.closeServer(serverId, { keepClientsAlive: true });
+                    await registry.closeServer(serverId, { keepClientsAlive: true, executionId });
                     console.error(`[DEBUG-TRIGGER] Soft-closed server to keep connections open for response nodes`);
                 }
             }

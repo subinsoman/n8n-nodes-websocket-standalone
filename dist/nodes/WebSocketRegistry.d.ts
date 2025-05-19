@@ -17,9 +17,12 @@ export declare class WebSocketRegistry {
     getClient(serverId: string, clientId: string): WebSocket | undefined;
     closeServer(serverId: string, options?: {
         keepClientsAlive?: boolean;
+        executionId?: string;
     }): Promise<void>;
     listServers(): void;
     private listClients;
     broadcastToServer(serverId: string, message: string, callback?: (client: WebSocket) => void): void;
+    registerExecution(serverId: string, executionId: string): void;
+    unregisterExecution(serverId: string, executionId: string): void;
 }
 export {};

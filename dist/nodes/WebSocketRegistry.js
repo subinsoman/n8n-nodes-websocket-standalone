@@ -64,6 +64,7 @@ class WebSocketRegistry {
             path: config.path
         });
         const clients = new Map();
+        const activeExecutions = new Set();
         const pingInterval = setInterval(() => {
             if (clients.size === 0) {
                 return;
@@ -149,10 +150,29 @@ class WebSocketRegistry {
         return server === null || server === void 0 ? void 0 : server.clients.get(clientId);
     }
     async closeServer(serverId, options = {}) {
-        console.error(`[DEBUG-REGISTRY] Attempting to close server with ID: ${serverId}. Keep clients alive: ${options.keepClientsAlive}`);
+        var _a;
+        const keepClientsAlive = options.keepClientsAlive !== false;
+        const executionId = options.executionId;
+        console.error(`[DEBUG-REGISTRY] Attempting to close server with ID: ${serverId}. Keep clients alive: ${keepClientsAlive}, Execution ID: ${executionId || 'none'}`);
         const server = this.servers.get(serverId);
         if (server) {
-            if (!options.keepClientsAlive) {
+            if (executionId && !server.activeExecutions) {
+                server.activeExecutions = new Set();
+            }
+            if (executionId && server.activeExecutions) {
+                server.activeExecutions.add(executionId);
+                console.error(`[DEBUG-REGISTRY] Registered execution ${executionId} for server ${serverId}. Active executions: ${server.activeExecutions.size}`);
+            }
+            if (executionId && server.activeExecutions && !keepClientsAlive) {
+                server.activeExecutions.delete(executionId);
+                console.error(`[DEBUG-REGISTRY] Removed execution ${executionId} from server ${serverId}. Remaining executions: ${server.activeExecutions.size}`);
+            }
+            const hasActiveExecutions = server.activeExecutions !== undefined && server.activeExecutions.size > 0;
+            const shouldKeepAlive = keepClientsAlive || hasActiveExecutions;
+            if (hasActiveExecutions) {
+                console.error(`[DEBUG-REGISTRY] Server ${serverId} has ${(_a = server.activeExecutions) === null || _a === void 0 ? void 0 : _a.size} active executions - forcing keepClientsAlive to true`);
+            }
+            if (!shouldKeepAlive) {
                 server.clients.forEach((client) => {
                     try {
                         client.close();
@@ -163,19 +183,20 @@ class WebSocketRegistry {
                 });
             }
             else {
-                console.error(`[DEBUG-REGISTRY] Keeping clients alive for server ${serverId} as requested`);
+                console.error(`[DEBUG-REGISTRY] Keeping ${server.clients.size} clients alive for server ${serverId}`);
             }
-            await new Promise((resolve) => {
-                server.wss.close(() => {
-                    console.error(`[DEBUG-REGISTRY] Server closed successfully. ID: ${serverId}`);
-                    resolve();
+            if (!shouldKeepAlive) {
+                await new Promise((resolve) => {
+                    server.wss.close(() => {
+                        console.error(`[DEBUG-REGISTRY] Server fully closed. ID: ${serverId}`);
+                        resolve();
+                    });
                 });
-            });
-            if (!options.keepClientsAlive) {
                 this.servers.delete(serverId);
+                console.error(`[DEBUG-REGISTRY] Server closed successfully. ID: ${serverId}`);
             }
             else {
-                console.error(`[DEBUG-REGISTRY] Keeping server entry for ${serverId} to maintain client references`);
+                console.error(`[DEBUG-REGISTRY] Server soft-closed, connections maintained for ${serverId}`);
             }
             this.saveRegistry();
         }
@@ -222,6 +243,23 @@ class WebSocketRegistry {
                 console.error(`[DEBUG-REGISTRY] Error sending message to client ${clientId}:`, error);
             }
         });
+    }
+    registerExecution(serverId, executionId) {
+        const server = this.servers.get(serverId);
+        if (server) {
+            if (!server.activeExecutions) {
+                server.activeExecutions = new Set();
+            }
+            server.activeExecutions.add(executionId);
+            console.error(`[DEBUG-REGISTRY] Registered execution ${executionId} for server ${serverId}. Active executions: ${server.activeExecutions.size}`);
+        }
+    }
+    unregisterExecution(serverId, executionId) {
+        const server = this.servers.get(serverId);
+        if (server && server.activeExecutions) {
+            server.activeExecutions.delete(executionId);
+            console.error(`[DEBUG-REGISTRY] Unregistered execution ${executionId} from server ${serverId}. Remaining executions: ${server.activeExecutions.size}`);
+        }
     }
 }
 exports.WebSocketRegistry = WebSocketRegistry;

@@ -169,6 +169,8 @@ class WebSocketResponse {
         const items = this.getInputData();
         const returnData = [];
         const registry = WebSocketRegistry_1.WebSocketRegistry.getInstance();
+        const executionId = this.getExecutionId() || 'unknown';
+        const nodeId = this.getNode().id;
         const executionContext = global.websocketExecutionContext;
         if (!executionContext.servers) {
             executionContext.servers = {};
@@ -196,6 +198,7 @@ class WebSocketResponse {
                         const serverIdProperty = this.getNodeParameter('serverIdProperty', i);
                         serverId = items[i].json[serverIdProperty];
                 }
+                registry.registerExecution(serverId, executionId);
                 const wss = registry.getServer(serverId);
                 if (!wss) {
                     throw new Error(`WebSocket server with ID ${serverId} not found`);
@@ -272,11 +275,12 @@ class WebSocketResponse {
                 const outputItem = { ...items[i].json };
                 outputItem.success = true;
                 outputItem.serverId = serverId;
-                outputItem.clientId = clientId;
+                outputItem.clientId = clientId || 'broadcast';
                 if (executionContext.servers && executionContext.servers[serverId]) {
                     outputItem.serverInfo = executionContext.servers[serverId];
                 }
                 returnData.push({ json: outputItem });
+                registry.unregisterExecution(serverId, executionId);
             }
             catch (error) {
                 console.error(`[DEBUG-RESPONSE] Error in WebSocket response:`, error);

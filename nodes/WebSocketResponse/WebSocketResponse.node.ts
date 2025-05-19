@@ -173,6 +173,10 @@ export class WebSocketResponse implements INodeType {
 		
 		const registry = WebSocketRegistry.getInstance();
 		
+		// Get execution ID for tracking
+		const executionId = this.getExecutionId() || 'unknown';
+		const nodeId = this.getNode().id;
+		
 		// Get global context for tracking WebSocket connections
 		const executionContext = (global as any).websocketExecutionContext;
 		if (!executionContext.servers) {
@@ -209,6 +213,9 @@ export class WebSocketResponse implements INodeType {
 						const serverIdProperty = this.getNodeParameter('serverIdProperty', i) as string;
 						serverId = items[i].json[serverIdProperty] as string;
 				}
+				
+				// Register this execution with the server to prevent premature closing
+				registry.registerExecution(serverId, executionId);
 				
 				// Check if the server exists
 				const wss = registry.getServer(serverId);
@@ -304,7 +311,7 @@ export class WebSocketResponse implements INodeType {
 				const outputItem = { ...items[i].json };
 				outputItem.success = true;
 				outputItem.serverId = serverId;
-				outputItem.clientId = clientId;
+				outputItem.clientId = clientId || 'broadcast';
 				
 				// Add context info if available
 				if (executionContext.servers && executionContext.servers[serverId]) {
@@ -312,6 +319,10 @@ export class WebSocketResponse implements INodeType {
 				}
 				
 				returnData.push({ json: outputItem });
+
+				// Clear this execution from the registry after we're done
+				registry.unregisterExecution(serverId, executionId);
+				
 			} catch (error: any) {
 				// Handle errors
 				console.error(`[DEBUG-RESPONSE] Error in WebSocket response:`, error);

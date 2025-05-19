@@ -8,6 +8,7 @@ interface IServerInfo {
 	port: number;
 	path: string;
 	clients: Map<string, WebSocket>;
+	activeExecutions?: Set<string>; // Track active workflow executions
 }
 
 interface IServerConfig {
@@ -15,9 +16,15 @@ interface IServerConfig {
 	path: string;
 }
 
+interface IServerEntry {
+	wss: WebSocket.Server;
+	clients: Map<string, WebSocket>;
+	activeExecutions?: Set<string>; // Track active workflow executions
+}
+
 export class WebSocketRegistry {
 	private static instance: WebSocketRegistry;
-	private servers: Map<string, { wss: WebSocket.Server; clients: Map<string, WebSocket> }>;
+	private servers: Map<string, IServerEntry>;
 	private readonly registryPath: string;
 
 	private constructor() {
@@ -80,6 +87,7 @@ export class WebSocketRegistry {
 		});
 
 		const clients = new Map<string, WebSocket>();
+		const activeExecutions = new Set<string>(); // Track active workflow executions
 		
 		// Set up ping interval to keep connections alive
 		const pingInterval = setInterval(() => {
@@ -184,12 +192,40 @@ export class WebSocketRegistry {
 		return server?.clients.get(clientId);
 	}
 
-	public async closeServer(serverId: string, options: { keepClientsAlive?: boolean } = {}): Promise<void> {
-		console.error(`[DEBUG-REGISTRY] Attempting to close server with ID: ${serverId}. Keep clients alive: ${options.keepClientsAlive}`);
+	public async closeServer(serverId: string, options: { keepClientsAlive?: boolean, executionId?: string } = {}): Promise<void> {
+		const keepClientsAlive = options.keepClientsAlive !== false; // Default to true unless explicitly set to false
+		const executionId = options.executionId;
+		
+		console.error(`[DEBUG-REGISTRY] Attempting to close server with ID: ${serverId}. Keep clients alive: ${keepClientsAlive}, Execution ID: ${executionId || 'none'}`);
 		const server = this.servers.get(serverId);
 		
 		if (server) {
-			if (!options.keepClientsAlive) {
+			// If we have an executionId, track it for this server
+			if (executionId && !server.activeExecutions) {
+				server.activeExecutions = new Set<string>();
+			}
+			
+			// Register execution as active
+			if (executionId && server.activeExecutions) {
+				server.activeExecutions.add(executionId);
+				console.error(`[DEBUG-REGISTRY] Registered execution ${executionId} for server ${serverId}. Active executions: ${server.activeExecutions.size}`);
+			}
+			
+			// Remove this execution from tracking if it's being closed
+			if (executionId && server.activeExecutions && !keepClientsAlive) {
+				server.activeExecutions.delete(executionId);
+				console.error(`[DEBUG-REGISTRY] Removed execution ${executionId} from server ${serverId}. Remaining executions: ${server.activeExecutions.size}`);
+			}
+			
+			// If there are active executions, always keep clients alive regardless of the passed parameter
+			const hasActiveExecutions = server.activeExecutions !== undefined && server.activeExecutions.size > 0;
+			const shouldKeepAlive = keepClientsAlive || hasActiveExecutions;
+			
+			if (hasActiveExecutions) {
+				console.error(`[DEBUG-REGISTRY] Server ${serverId} has ${server.activeExecutions?.size} active executions - forcing keepClientsAlive to true`);
+			}
+
+			if (!shouldKeepAlive) {
 				// Close all client connections
 				server.clients.forEach((client) => {
 					try {
@@ -199,22 +235,25 @@ export class WebSocketRegistry {
 					}
 				});
 			} else {
-				console.error(`[DEBUG-REGISTRY] Keeping clients alive for server ${serverId} as requested`);
+				console.error(`[DEBUG-REGISTRY] Keeping ${server.clients.size} clients alive for server ${serverId}`);
 			}
 
-			// Close the server
-			await new Promise<void>((resolve) => {
-				server.wss.close(() => {
-					console.error(`[DEBUG-REGISTRY] Server closed successfully. ID: ${serverId}`);
-					resolve();
+			// In soft close mode, we don't want to close the WSS server,
+			// just mark it as inactive to keep connections alive
+			if (!shouldKeepAlive) {
+				// Close the server fully
+				await new Promise<void>((resolve) => {
+					server.wss.close(() => {
+						console.error(`[DEBUG-REGISTRY] Server fully closed. ID: ${serverId}`);
+						resolve();
+					});
 				});
-			});
-
-			if (!options.keepClientsAlive) {
+				
 				this.servers.delete(serverId);
+				console.error(`[DEBUG-REGISTRY] Server closed successfully. ID: ${serverId}`);
 			} else {
-				// For soft close, we keep the server entry but mark it as inactive
-				console.error(`[DEBUG-REGISTRY] Keeping server entry for ${serverId} to maintain client references`);
+				// For soft close, we keep the server entry and all connections
+				console.error(`[DEBUG-REGISTRY] Server soft-closed, connections maintained for ${serverId}`);
 			}
 			
 			this.saveRegistry();
@@ -266,5 +305,24 @@ export class WebSocketRegistry {
 				console.error(`[DEBUG-REGISTRY] Error sending message to client ${clientId}:`, error);
 			}
 		});
+	}
+
+	public registerExecution(serverId: string, executionId: string): void {
+		const server = this.servers.get(serverId);
+		if (server) {
+			if (!server.activeExecutions) {
+				server.activeExecutions = new Set<string>();
+			}
+			server.activeExecutions.add(executionId);
+			console.error(`[DEBUG-REGISTRY] Registered execution ${executionId} for server ${serverId}. Active executions: ${server.activeExecutions.size}`);
+		}
+	}
+	
+	public unregisterExecution(serverId: string, executionId: string): void {
+		const server = this.servers.get(serverId);
+		if (server && server.activeExecutions) {
+			server.activeExecutions.delete(executionId);
+			console.error(`[DEBUG-REGISTRY] Unregistered execution ${executionId} from server ${serverId}. Remaining executions: ${server.activeExecutions.size}`);
+		}
 	}
 } 
