@@ -57,44 +57,73 @@ class WebSocketRegistry {
     async findN8nServer() {
         return new Promise((resolve) => {
             const testSocket = new ws_1.default(`ws://localhost:${this.N8N_PORT}`);
+            let resolved = false;
             testSocket.on('error', () => {
-                resolve(undefined);
-                testSocket.close();
+                if (!resolved) {
+                    resolved = true;
+                    testSocket.close();
+                    resolve(undefined);
+                }
             });
             testSocket.on('open', () => {
-                resolve(http_1.default.createServer());
-                testSocket.close();
+                if (!resolved) {
+                    resolved = true;
+                    testSocket.close();
+                    const server = http_1.default.createServer();
+                    server.listen(this.N8N_PORT);
+                    resolve(server);
+                }
             });
+            setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    testSocket.close();
+                    resolve(undefined);
+                }
+            }, 3000);
         });
     }
     createServer(serverId, config) {
-        console.error(`[DEBUG] Creating WebSocket server on n8n port ${this.N8N_PORT} with path ${config.path}`);
+        console.error(`[DEBUG] Creating WebSocket server with path ${config.path}`);
         const wss = new ws_1.default.Server({
-            port: this.N8N_PORT,
-            path: config.path,
             noServer: true
         });
         const clients = new Map();
         const handleUpgrade = async (request, socket, head) => {
             if (request.url === config.path) {
-                wss.handleUpgrade(request, socket, head, (ws) => {
-                    wss.emit('connection', ws, request);
-                });
+                try {
+                    wss.handleUpgrade(request, socket, head, (ws) => {
+                        wss.emit('connection', ws, request);
+                    });
+                }
+                catch (error) {
+                    console.error(`[DEBUG] Error handling upgrade:`, error);
+                    socket.destroy();
+                }
             }
         };
         this.findN8nServer().then((server) => {
             if (server) {
+                console.error(`[DEBUG] Attaching WebSocket server to n8n server on port ${this.N8N_PORT}`);
                 server.on('upgrade', handleUpgrade);
-                console.error(`[DEBUG] WebSocket server attached to n8n server on port ${this.N8N_PORT}`);
             }
             else {
                 console.error(`[DEBUG] Could not find n8n server, creating standalone WebSocket server`);
-                const standaloneWss = new ws_1.default.Server({
-                    port: this.N8N_PORT,
-                    path: config.path
+                const standalonePort = this.N8N_PORT + 1;
+                const standaloneServer = http_1.default.createServer();
+                standaloneServer.on('upgrade', handleUpgrade);
+                standaloneServer.listen(standalonePort, () => {
+                    console.error(`[DEBUG] Standalone WebSocket server listening on port ${standalonePort}`);
                 });
-                wss.clients = standaloneWss.clients;
-                wss.options = standaloneWss.options;
+                standaloneServer.on('error', (error) => {
+                    if (error.code === 'EADDRINUSE') {
+                        console.error(`[DEBUG] Port ${standalonePort} is in use, trying next port`);
+                        standaloneServer.listen(standalonePort + 1);
+                    }
+                    else {
+                        console.error(`[DEBUG] Server error:`, error);
+                    }
+                });
             }
         });
         wss.on('connection', (ws) => {

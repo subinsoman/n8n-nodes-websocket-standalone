@@ -30,7 +30,7 @@ class WebSocketTrigger {
                     options: [
                         {
                             name: 'info',
-                            value: 'The WebSocket server will be available at: ws://localhost:5678/workflow/{workflowId}',
+                            value: 'The WebSocket server will be available at:\n- Primary: ws://localhost:5678/workflow/{workflowId}\n- Fallback: ws://localhost:5679/workflow/{workflowId} (if n8n server is not accessible)',
                         },
                     ],
                 },
