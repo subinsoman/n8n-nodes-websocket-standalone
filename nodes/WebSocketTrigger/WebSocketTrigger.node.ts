@@ -3,7 +3,6 @@ import {
 	INodeTypeDescription,
 	ITriggerResponse,
 	ITriggerFunctions,
-	INodeParameters,
 } from 'n8n-workflow';
 import { WebSocketRegistry } from '../WebSocketRegistry';
 
@@ -34,7 +33,7 @@ export class WebSocketTrigger implements INodeType {
 				options: [
 					{
 						name: 'info',
-						value: 'The WebSocket server will be available at: ws://localhost:5678/workflow/{workflowId}',
+						value: 'The WebSocket server will be available at:\n- Primary: ws://localhost:5678/workflow/{workflowId}\n- Fallback: ws://localhost:5679/workflow/{workflowId} (if n8n server is not accessible)',
 					},
 				],
 			},
@@ -45,7 +44,7 @@ export class WebSocketTrigger implements INodeType {
 		const workflowId = this.getWorkflow().id;
 		const path = `/workflow/${workflowId}`;
 		
-		// Generate server ID with the exact format expected by the response node
+		// Generate server ID with the workflow ID
 		const serverId = `ws-${workflowId}`;
 		console.error(`[DEBUG] Creating WebSocket server with ID: ${serverId}`);
 
