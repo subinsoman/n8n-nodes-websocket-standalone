@@ -5,11 +5,13 @@ import os from 'os';
 import http from 'http';
 
 interface IServerInfo {
+	port: number;
 	path: string;
 	clients: Map<string, WebSocket>;
 }
 
 interface IServerConfig {
+	port: number;
 	path: string;
 }
 
@@ -17,7 +19,6 @@ export class WebSocketRegistry {
 	private static instance: WebSocketRegistry;
 	private servers: Map<string, { wss: WebSocket.Server; clients: Map<string, WebSocket> }>;
 	private readonly registryPath: string;
-	private readonly N8N_PORT = 5678;
 
 	private constructor() {
 		this.servers = new Map();
@@ -40,6 +41,7 @@ export class WebSocketRegistry {
 				Object.entries(data).forEach(([serverId, serverInfo]) => {
 					if (!this.servers.has(serverId)) {
 						this.createServer(serverId, {
+							port: serverInfo.port,
 							path: serverInfo.path,
 						});
 					}
@@ -54,10 +56,14 @@ export class WebSocketRegistry {
 		try {
 			const data: { [key: string]: IServerInfo } = {};
 			this.servers.forEach(({ wss, clients }, serverId) => {
-				data[serverId] = {
-					path: wss.options.path as string,
-					clients: clients,
-				};
+				const address = wss.address();
+				if (address && typeof address === 'object') {
+					data[serverId] = {
+						port: address.port,
+						path: wss.options.path as string,
+						clients: clients,
+					};
+				}
 			});
 			fs.writeFileSync(this.registryPath, JSON.stringify(data, null, 2));
 		} catch (error) {
@@ -65,117 +71,15 @@ export class WebSocketRegistry {
 		}
 	}
 
-	private async findN8nServer(): Promise<http.Server | undefined> {
-		return new Promise((resolve) => {
-			// Try to connect to n8n server
-			const testSocket = new WebSocket(`ws://localhost:${this.N8N_PORT}`);
-			
-			let resolved = false;
-			
-			testSocket.on('error', () => {
-				if (!resolved) {
-					resolved = true;
-					testSocket.close();
-					resolve(undefined);
-				}
-			});
-
-			testSocket.on('open', () => {
-				if (!resolved) {
-					resolved = true;
-					testSocket.close();
-					// Since n8n server exists, we'll create a new HTTP server that will proxy requests
-					const server = http.createServer();
-					server.on('upgrade', (request, socket, head) => {
-						// Forward the upgrade event to n8n server
-						const n8nSocket = new WebSocket(`ws://localhost:${this.N8N_PORT}${request.url}`);
-						
-						n8nSocket.on('open', () => {
-							// Forward messages from client to n8n
-							socket.on('data', (data: Buffer) => {
-								n8nSocket.send(data);
-							});
-
-							// Forward messages from n8n to client
-							n8nSocket.on('message', (data: WebSocket.Data) => {
-								socket.write(data.toString());
-							});
-
-							// Handle connection close
-							socket.on('close', () => n8nSocket.close());
-							n8nSocket.on('close', () => socket.end());
-
-							// Complete WebSocket handshake
-							socket.write('HTTP/1.1 101 Switching Protocols\r\n' +
-									   'Upgrade: websocket\r\n' +
-									   'Connection: Upgrade\r\n' +
-									   '\r\n');
-						});
-					});
-					resolve(server);
-				}
-			});
-
-			// Add timeout to prevent hanging
-			setTimeout(() => {
-				if (!resolved) {
-					resolved = true;
-					testSocket.close();
-					resolve(undefined);
-				}
-			}, 3000);
-		});
-	}
-
 	private createServer(serverId: string, config: IServerConfig) {
-		console.error(`[DEBUG] Creating WebSocket server with path ${config.path}`);
+		console.error(`[DEBUG] Creating WebSocket server on port ${config.port} with path ${config.path}`);
 		
 		const wss = new WebSocket.Server({ 
-			noServer: true // Always use noServer mode
+			port: config.port,
+			path: config.path
 		});
 
 		const clients = new Map<string, WebSocket>();
-
-		// Handle upgrade requests
-		const handleUpgrade = async (request: http.IncomingMessage, socket: any, head: Buffer) => {
-			if (request.url === config.path) {
-				try {
-					wss.handleUpgrade(request, socket, head, (ws) => {
-						wss.emit('connection', ws, request);
-					});
-				} catch (error) {
-					console.error(`[DEBUG] Error handling upgrade:`, error);
-					socket.destroy();
-				}
-			}
-		};
-
-		// Try to find n8n's server
-		this.findN8nServer().then((server) => {
-			if (server) {
-				console.error(`[DEBUG] Attaching WebSocket server to n8n server on port ${this.N8N_PORT}`);
-				server.on('upgrade', handleUpgrade);
-			} else {
-				console.error(`[DEBUG] Could not find n8n server, creating standalone WebSocket server`);
-				// Create a new HTTP server for WebSocket
-				const httpServer = http.createServer();
-				httpServer.on('upgrade', handleUpgrade);
-				
-				httpServer.listen(this.N8N_PORT, () => {
-					console.error(`[DEBUG] WebSocket server listening on port ${this.N8N_PORT}`);
-				});
-
-				httpServer.on('error', (error: any) => {
-					if (error.code === 'EADDRINUSE') {
-						console.error(`[DEBUG] Port ${this.N8N_PORT} is in use, trying next port`);
-						const nextPort = this.N8N_PORT + 1;
-						httpServer.listen(nextPort);
-					} else {
-						console.error(`[DEBUG] Server error:`, error);
-					}
-				});
-			}
-		});
 
 		wss.on('connection', (ws: WebSocket) => {
 			const clientId = Math.random().toString(36).substring(2, 8);
@@ -262,11 +166,14 @@ export class WebSocketRegistry {
 		
 		console.error('=== Available WebSocket Servers ===');
 		this.servers.forEach(({ wss, clients }, serverId) => {
-			console.error(`Server ID: ${serverId}`);
-			console.error(`Port: ${this.N8N_PORT}`);
-			console.error(`Path: ${wss.options.path}`);
-			console.error(`Active Clients: ${clients.size}`);
-			this.listClients(serverId);
+			const address = wss.address();
+			if (address && typeof address === 'object') {
+				console.error(`Server ID: ${serverId}`);
+				console.error(`Port: ${address.port}`);
+				console.error(`Path: ${wss.options.path}`);
+				console.error(`Active Clients: ${clients.size}`);
+				this.listClients(serverId);
+			}
 		});
 		console.error('================================');
 	}

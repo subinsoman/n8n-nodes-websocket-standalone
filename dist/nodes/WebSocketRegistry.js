@@ -70,7 +70,23 @@ class WebSocketRegistry {
                     resolved = true;
                     testSocket.close();
                     const server = http_1.default.createServer();
-                    server.listen(this.N8N_PORT);
+                    server.on('upgrade', (request, socket, head) => {
+                        const n8nSocket = new ws_1.default(`ws://localhost:${this.N8N_PORT}${request.url}`);
+                        n8nSocket.on('open', () => {
+                            socket.on('data', (data) => {
+                                n8nSocket.send(data);
+                            });
+                            n8nSocket.on('message', (data) => {
+                                socket.write(data.toString());
+                            });
+                            socket.on('close', () => n8nSocket.close());
+                            n8nSocket.on('close', () => socket.end());
+                            socket.write('HTTP/1.1 101 Switching Protocols\r\n' +
+                                'Upgrade: websocket\r\n' +
+                                'Connection: Upgrade\r\n' +
+                                '\r\n');
+                        });
+                    });
                     resolve(server);
                 }
             });
@@ -109,16 +125,16 @@ class WebSocketRegistry {
             }
             else {
                 console.error(`[DEBUG] Could not find n8n server, creating standalone WebSocket server`);
-                const standalonePort = this.N8N_PORT + 1;
-                const standaloneServer = http_1.default.createServer();
-                standaloneServer.on('upgrade', handleUpgrade);
-                standaloneServer.listen(standalonePort, () => {
-                    console.error(`[DEBUG] Standalone WebSocket server listening on port ${standalonePort}`);
+                const httpServer = http_1.default.createServer();
+                httpServer.on('upgrade', handleUpgrade);
+                httpServer.listen(this.N8N_PORT, () => {
+                    console.error(`[DEBUG] WebSocket server listening on port ${this.N8N_PORT}`);
                 });
-                standaloneServer.on('error', (error) => {
+                httpServer.on('error', (error) => {
                     if (error.code === 'EADDRINUSE') {
-                        console.error(`[DEBUG] Port ${standalonePort} is in use, trying next port`);
-                        standaloneServer.listen(standalonePort + 1);
+                        console.error(`[DEBUG] Port ${this.N8N_PORT} is in use, trying next port`);
+                        const nextPort = this.N8N_PORT + 1;
+                        httpServer.listen(nextPort);
                     }
                     else {
                         console.error(`[DEBUG] Server error:`, error);
