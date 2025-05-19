@@ -6,6 +6,13 @@ import {
 } from 'n8n-workflow';
 import { WebSocketRegistry } from '../WebSocketRegistry';
 
+// Create a global store for execution context
+if (!(global as any).websocketExecutionContext) {
+	(global as any).websocketExecutionContext = {
+		servers: {}
+	};
+}
+
 export class WebSocketTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'WebSocket Trigger',
@@ -37,6 +44,14 @@ export class WebSocketTrigger implements INodeType {
 				description: 'The WebSocket server path',
 			},
 			{
+				displayName: 'Connection ID',
+				name: 'connectionId',
+				type: 'string',
+				default: '',
+				required: false,
+				description: 'Optional custom connection ID. If not provided, the port will be used',
+			},
+			{
 				displayName: 'Info',
 				name: 'info',
 				type: 'notice',
@@ -59,21 +74,48 @@ export class WebSocketTrigger implements INodeType {
 	async trigger(this: ITriggerFunctions): Promise<ITriggerResponse> {
 		const port = this.getNodeParameter('port') as number;
 		const path = this.getNodeParameter('path') as string;
+		const customConnectionId = this.getNodeParameter('connectionId', '') as string;
 		
-		// Generate server ID with port
-		const serverId = `ws-${port}`;
-		console.error(`[DEBUG] Creating WebSocket server with ID: ${serverId}`);
+		// Get execution and node IDs for context tracking
+		const executionId = this.getExecutionId();
+		const nodeId = this.getNode().id;
+		
+		// Generate server ID with additional context info
+		const connectionId = customConnectionId || `${port}`;
+		const serverId = `ws-${connectionId}`;
+		
+		console.error(`[DEBUG-TRIGGER] Creating WebSocket server with ID: ${serverId}`);
+		console.error(`[DEBUG-TRIGGER] Execution ID: ${executionId}, Node ID: ${nodeId}`);
 
+		// Use global context instead of workflow context
+		const context = (global as any).websocketExecutionContext;
+		if (!context.servers) {
+			context.servers = {};
+		}
+		
 		const registry = WebSocketRegistry.getInstance();
-		console.error(`[DEBUG] Current WebSocket Servers (Before Creation) ===`);
+		console.error(`[DEBUG-TRIGGER] Current WebSocket Servers (Before Creation) ===`);
 		registry.listServers();
 
 		try {
 			// Close any existing server on this port
 			await registry.closeServer(serverId);
 			
+			// Create or get server
 			const wss = await registry.getOrCreateServer(serverId, { port, path });
-			console.error(`[DEBUG] WebSocket server created/retrieved successfully`);
+			console.error(`[DEBUG-TRIGGER] WebSocket server created/retrieved successfully`);
+			
+			// Store in context
+			context.servers[serverId] = { 
+				serverId, 
+				port, 
+				path, 
+				nodeId, 
+				executionId,
+				active: true 
+			};
+			
+			console.error(`[DEBUG-TRIGGER] Server added to execution context: ${JSON.stringify(context.servers[serverId])}`);
 
 			const executeTrigger = async (data: any) => {
 				try {
@@ -83,13 +125,16 @@ export class WebSocketTrigger implements INodeType {
 						serverId,
 						path,
 						port,
+						nodeId,
+						executionId,
 						clientId: data.clientId,
+						contextInfo: context.servers[serverId]
 					};
 					
-					console.error(`[DEBUG] Trigger received message. Server ID: ${serverId}, Client ID: ${data.clientId}`);
+					console.error(`[DEBUG-TRIGGER] Received message. Server ID: ${serverId}, Client ID: ${data.clientId}`);
 					this.emit([this.helpers.returnJsonArray([outputData])]);
 				} catch (error) {
-					console.error(`[DEBUG] Error in trigger execution:`, error);
+					console.error(`[DEBUG-TRIGGER] Error in trigger execution:`, error);
 				}
 			};
 
@@ -101,16 +146,38 @@ export class WebSocketTrigger implements INodeType {
 				throw new Error(`Failed to verify server ${serverId} is running`);
 			}
 
+			// Store a reference to the ITriggerFunctions instance for closeFunction to use
+			const self = this;
+
 			async function closeFunction() {
-				console.error(`[DEBUG] Closing WebSocket server with ID: ${serverId}`);
-				await registry.closeServer(serverId);
+				console.error(`[DEBUG-TRIGGER] Closing WebSocket server with ID: ${serverId}`);
+				
+				// Update context to mark server as inactive
+				if (context.servers && context.servers[serverId]) {
+					context.servers[serverId].active = false;
+				}
+				
+				// Check if this is a final workflow cleanup (deactivation/deletion)
+				// This check isn't fully reliable, but helps prevent closing in most normal executions
+				const isWorkflowEnd = self.getWorkflow !== undefined;
+				console.error(`[DEBUG-TRIGGER] Is workflow end: ${isWorkflowEnd}`);
+				
+				if (isWorkflowEnd) {
+					// Only fully close the server if the workflow is being deactivated/deleted
+					await registry.closeServer(serverId);
+					console.error(`[DEBUG-TRIGGER] Fully closed server due to workflow deactivation/deletion`);
+				} else {
+					// For normal execution completion, use soft close to keep clients alive
+					await registry.closeServer(serverId, { keepClientsAlive: true });
+					console.error(`[DEBUG-TRIGGER] Soft-closed server to keep connections open for response nodes`);
+				}
 			}
 
 			return {
 				closeFunction,
 			};
 		} catch (error) {
-			console.error(`[DEBUG] Error in WebSocket trigger:`, error);
+			console.error(`[DEBUG-TRIGGER] Error in WebSocket trigger:`, error);
 			throw error;
 		}
 	}

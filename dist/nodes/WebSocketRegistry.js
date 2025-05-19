@@ -35,7 +35,7 @@ class WebSocketRegistry {
             }
         }
         catch (error) {
-            console.error('[DEBUG] Error loading registry:', error);
+            console.error('[DEBUG-REGISTRY] Error loading registry:', error);
         }
     }
     saveRegistry() {
@@ -54,24 +54,54 @@ class WebSocketRegistry {
             fs_1.default.writeFileSync(this.registryPath, JSON.stringify(data, null, 2));
         }
         catch (error) {
-            console.error('[DEBUG] Error saving registry:', error);
+            console.error('[DEBUG-REGISTRY] Error saving registry:', error);
         }
     }
     createServer(serverId, config) {
-        console.error(`[DEBUG] Creating WebSocket server on port ${config.port} with path ${config.path}`);
+        console.error(`[DEBUG-REGISTRY] Creating WebSocket server on port ${config.port} with path ${config.path}`);
         const wss = new ws_1.default.Server({
             port: config.port,
             path: config.path
         });
         const clients = new Map();
+        const pingInterval = setInterval(() => {
+            if (clients.size === 0) {
+                return;
+            }
+            console.error(`[DEBUG-REGISTRY] Sending ping to ${clients.size} clients on server ${serverId}`);
+            clients.forEach((client, clientId) => {
+                if (client.readyState === ws_1.default.OPEN) {
+                    try {
+                        client.ping();
+                        console.error(`[DEBUG-REGISTRY] Ping sent to client ${clientId}`);
+                    }
+                    catch (error) {
+                        console.error(`[DEBUG-REGISTRY] Error sending ping to client ${clientId}:`, error);
+                    }
+                }
+                else if (client.readyState === ws_1.default.CLOSED || client.readyState === ws_1.default.CLOSING) {
+                    console.error(`[DEBUG-REGISTRY] Removing dead client ${clientId} from server ${serverId}`);
+                    clients.delete(clientId);
+                    this.saveRegistry();
+                }
+            });
+        }, 30000);
         wss.on('connection', (ws) => {
             const clientId = Math.random().toString(36).substring(2, 8);
             clients.set(clientId, ws);
-            console.error(`[DEBUG] New client connected. Server ID: ${serverId}, Client ID: ${clientId}`);
-            console.error(`[DEBUG] Active Clients: ${clients.size}`);
+            console.error(`[DEBUG-REGISTRY] New client connected. Server ID: ${serverId}, Client ID: ${clientId}`);
+            console.error(`[DEBUG-REGISTRY] Active Clients: ${clients.size}`);
             this.listClients(serverId);
+            ws.on('ping', () => {
+                if (ws.readyState === ws_1.default.OPEN) {
+                    ws.pong();
+                }
+            });
+            ws.on('pong', () => {
+                console.error(`[DEBUG-REGISTRY] Received pong from client ${clientId}`);
+            });
             ws.on('message', (message) => {
-                console.error(`[DEBUG] Received message from client ${clientId} on server ${serverId}`);
+                console.error(`[DEBUG-REGISTRY] Received message from client ${clientId} on server ${serverId}`);
                 try {
                     const data = JSON.parse(message.toString());
                     wss.emit('message', { ...data, clientId });
@@ -82,12 +112,21 @@ class WebSocketRegistry {
             });
             ws.on('close', () => {
                 clients.delete(clientId);
-                console.error(`[DEBUG] Client ${clientId} disconnected from server ${serverId}`);
-                console.error(`[DEBUG] Active Clients: ${clients.size}`);
+                console.error(`[DEBUG-REGISTRY] Client ${clientId} disconnected from server ${serverId}`);
+                console.error(`[DEBUG-REGISTRY] Active Clients: ${clients.size}`);
                 this.listClients(serverId);
                 this.saveRegistry();
             });
+            ws.on('error', (error) => {
+                console.error(`[DEBUG-REGISTRY] WebSocket error for client ${clientId}:`, error);
+            });
         });
+        const originalClose = wss.close;
+        wss.close = function (...args) {
+            clearInterval(pingInterval);
+            console.error(`[DEBUG-REGISTRY] Stopping ping interval for server ${serverId}`);
+            return originalClose.apply(this, args);
+        };
         this.servers.set(serverId, { wss, clients });
         this.saveRegistry();
         return wss;
@@ -109,50 +148,80 @@ class WebSocketRegistry {
         const server = this.servers.get(serverId);
         return server === null || server === void 0 ? void 0 : server.clients.get(clientId);
     }
-    async closeServer(serverId) {
-        console.error(`[DEBUG] Attempting to close server with ID: ${serverId}`);
+    async closeServer(serverId, options = {}) {
+        console.error(`[DEBUG-REGISTRY] Attempting to close server with ID: ${serverId}. Keep clients alive: ${options.keepClientsAlive}`);
         const server = this.servers.get(serverId);
         if (server) {
-            server.clients.forEach((client) => {
-                try {
-                    client.close();
-                }
-                catch (error) {
-                    console.error(`[DEBUG] Error closing client connection:`, error);
-                }
-            });
+            if (!options.keepClientsAlive) {
+                server.clients.forEach((client) => {
+                    try {
+                        client.close();
+                    }
+                    catch (error) {
+                        console.error(`[DEBUG-REGISTRY] Error closing client connection:`, error);
+                    }
+                });
+            }
+            else {
+                console.error(`[DEBUG-REGISTRY] Keeping clients alive for server ${serverId} as requested`);
+            }
             await new Promise((resolve) => {
                 server.wss.close(() => {
-                    console.error(`[DEBUG] Server closed successfully. ID: ${serverId}`);
+                    console.error(`[DEBUG-REGISTRY] Server closed successfully. ID: ${serverId}`);
                     resolve();
                 });
             });
-            this.servers.delete(serverId);
+            if (!options.keepClientsAlive) {
+                this.servers.delete(serverId);
+            }
+            else {
+                console.error(`[DEBUG-REGISTRY] Keeping server entry for ${serverId} to maintain client references`);
+            }
             this.saveRegistry();
         }
     }
     listServers() {
         this.loadRegistry();
-        console.error('=== Available WebSocket Servers ===');
+        console.error('=== [DEBUG-REGISTRY] Available WebSocket Servers ===');
         this.servers.forEach(({ wss, clients }, serverId) => {
             const address = wss.address();
             if (address && typeof address === 'object') {
-                console.error(`Server ID: ${serverId}`);
-                console.error(`Port: ${address.port}`);
-                console.error(`Path: ${wss.options.path}`);
-                console.error(`Active Clients: ${clients.size}`);
+                console.error(`[DEBUG-REGISTRY] Server ID: ${serverId}`);
+                console.error(`[DEBUG-REGISTRY] Port: ${address.port}`);
+                console.error(`[DEBUG-REGISTRY] Path: ${wss.options.path}`);
+                console.error(`[DEBUG-REGISTRY] Active Clients: ${clients.size}`);
                 this.listClients(serverId);
             }
         });
-        console.error('================================');
+        console.error('=== [DEBUG-REGISTRY] End of Server List ===');
     }
     listClients(serverId) {
         const server = this.servers.get(serverId);
         if (server) {
             server.clients.forEach((_, clientId) => {
-                console.error(`  - Client ID: ${clientId}`);
+                console.error(`[DEBUG-REGISTRY]   - Client ID: ${clientId}`);
             });
         }
+    }
+    broadcastToServer(serverId, message, callback) {
+        const server = this.servers.get(serverId);
+        if (!server) {
+            console.error(`[DEBUG-REGISTRY] Server with ID ${serverId} not found for broadcast`);
+            return;
+        }
+        console.error(`[DEBUG-REGISTRY] Broadcasting message to server ${serverId} with ${server.clients.size} clients`);
+        server.clients.forEach((client, clientId) => {
+            try {
+                client.send(message);
+                if (callback) {
+                    callback(client);
+                }
+                console.error(`[DEBUG-REGISTRY] Message sent to client ${clientId}`);
+            }
+            catch (error) {
+                console.error(`[DEBUG-REGISTRY] Error sending message to client ${clientId}:`, error);
+            }
+        });
     }
 }
 exports.WebSocketRegistry = WebSocketRegistry;

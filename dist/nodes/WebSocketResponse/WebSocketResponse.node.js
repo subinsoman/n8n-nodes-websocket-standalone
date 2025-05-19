@@ -1,7 +1,16 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebSocketResponse = void 0;
 const WebSocketRegistry_1 = require("../WebSocketRegistry");
+const ws_1 = __importDefault(require("ws"));
+if (!global.websocketExecutionContext) {
+    global.websocketExecutionContext = {
+        servers: {}
+    };
+}
 class WebSocketResponse {
     constructor() {
         this.description = {
@@ -10,37 +19,148 @@ class WebSocketResponse {
             icon: 'fa:plug',
             group: ['transform'],
             version: 1,
-            description: 'Sends a response to a WebSocket client',
+            description: 'Send response to a WebSocket client',
             defaults: {
                 name: 'WebSocket Response',
+                color: '#885577',
             },
             inputs: ['main'],
             outputs: ['main'],
             properties: [
                 {
+                    displayName: 'Server ID',
+                    name: 'serverId',
+                    type: 'string',
+                    default: '',
+                    description: 'ID of the WebSocket server to send the response to (format: ws-{port} or custom ID)',
+                },
+                {
+                    displayName: 'Connection ID Method',
+                    name: 'connectionMethod',
+                    type: 'options',
+                    options: [
+                        {
+                            name: 'Use Server ID from Input',
+                            value: 'fromInput',
+                        },
+                        {
+                            name: 'Custom Server ID',
+                            value: 'custom',
+                        },
+                        {
+                            name: 'Use Context Server',
+                            value: 'fromContext',
+                        },
+                    ],
+                    default: 'fromInput',
+                    description: 'Where to get the server ID from',
+                },
+                {
+                    displayName: 'Custom Server ID',
+                    name: 'customServerId',
+                    type: 'string',
+                    displayOptions: {
+                        show: {
+                            connectionMethod: ['custom'],
+                        },
+                    },
+                    default: '',
+                    description: 'Custom WebSocket server ID to use (format: ws-{identifier})',
+                },
+                {
+                    displayName: 'Server ID Property',
+                    name: 'serverIdProperty',
+                    type: 'string',
+                    displayOptions: {
+                        show: {
+                            connectionMethod: ['fromInput'],
+                        },
+                    },
+                    default: 'serverId',
+                    description: 'Property in the input data that contains the server ID',
+                },
+                {
+                    displayName: 'Client ID',
+                    name: 'clientId',
+                    type: 'string',
+                    default: '',
+                    description: 'ID of the client to send the response to',
+                },
+                {
+                    displayName: 'Client ID Method',
+                    name: 'clientMethod',
+                    type: 'options',
+                    options: [
+                        {
+                            name: 'Use Client ID from Input',
+                            value: 'fromInput',
+                        },
+                        {
+                            name: 'Custom Client ID',
+                            value: 'custom',
+                        },
+                        {
+                            name: 'Broadcast to All Clients',
+                            value: 'broadcast',
+                        },
+                    ],
+                    default: 'fromInput',
+                    description: 'Where to get the client ID from',
+                },
+                {
+                    displayName: 'Client ID Property',
+                    name: 'clientIdProperty',
+                    type: 'string',
+                    displayOptions: {
+                        show: {
+                            clientMethod: ['fromInput'],
+                        },
+                    },
+                    default: 'clientId',
+                    description: 'Property in the input data that contains the client ID',
+                },
+                {
+                    displayName: 'Custom Client ID',
+                    name: 'customClientId',
+                    type: 'string',
+                    displayOptions: {
+                        show: {
+                            clientMethod: ['custom'],
+                        },
+                    },
+                    default: '',
+                    description: 'Custom client ID to send the response to',
+                },
+                {
+                    displayName: 'JSON Response',
+                    name: 'jsonResponse',
+                    type: 'boolean',
+                    default: true,
+                    description: 'Whether the response should be formatted as JSON',
+                },
+                {
                     displayName: 'Response Data',
                     name: 'responseData',
                     type: 'string',
-                    default: '',
-                    required: true,
-                    description: 'The data to send as a response',
-                },
-                {
-                    displayName: 'Info',
-                    name: 'info',
-                    type: 'notice',
-                    default: '',
+                    default: '={{ JSON.stringify($json) }}',
+                    description: 'Response to send to the WebSocket client. JSON string or plain text.',
                     displayOptions: {
                         show: {
-                            '@version': [1],
+                            jsonResponse: [false],
                         },
                     },
-                    options: [
-                        {
-                            name: 'info',
-                            value: 'This node sends responses back to WebSocket clients connected to this workflow.',
+                },
+                {
+                    displayName: 'Response JSON',
+                    name: 'responseJson',
+                    type: 'json',
+                    default: '={{ $json }}',
+                    description: 'JSON data to send to the WebSocket client',
+                    displayOptions: {
+                        show: {
+                            jsonResponse: [true],
                         },
-                    ],
+                    },
                 },
             ],
         };
@@ -48,94 +168,122 @@ class WebSocketResponse {
     async execute() {
         const items = this.getInputData();
         const returnData = [];
-        const MAX_RETRIES = 3;
-        const RETRY_DELAY = 1000;
-        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const registry = WebSocketRegistry_1.WebSocketRegistry.getInstance();
+        const executionContext = global.websocketExecutionContext;
+        if (!executionContext.servers) {
+            executionContext.servers = {};
+        }
+        console.error('[DEBUG-RESPONSE] Current WebSocket Servers ===');
+        registry.listServers();
         for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            const responseData = this.getNodeParameter('responseData', i);
-            let serverId = item.json.serverId;
-            const clientId = item.json.clientId;
-            const port = item.json.port;
-            const workflowId = this.getWorkflow().id;
-            console.error(`[DEBUG] Processing WebSocket Response - Input data:`, JSON.stringify(item.json, null, 2));
-            if (serverId && serverId.startsWith('ws-') && port) {
-                const newServerId = `ws-${workflowId}`;
-                console.error(`[DEBUG] Converting legacy server ID ${serverId} to new format ${newServerId}`);
-                serverId = newServerId;
-            }
-            if (!serverId || !clientId) {
-                console.error(`[DEBUG] Missing serverId or clientId in input data:`, item.json);
-                throw new Error('Missing serverId or clientId in the input data');
-            }
-            console.error(`[DEBUG] Processing WebSocket Response ===`);
-            console.error(`[DEBUG] Server ID: ${serverId}`);
-            console.error(`[DEBUG] Client ID: ${clientId}`);
-            let lastError = null;
-            let success = false;
-            for (let attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
-                try {
-                    if (attempt > 0) {
-                        console.error(`[DEBUG] Retry attempt ${attempt + 1} for server ${serverId}`);
-                        await sleep(RETRY_DELAY);
-                    }
-                    const registry = WebSocketRegistry_1.WebSocketRegistry.getInstance();
-                    console.error(`[DEBUG] Current WebSocket Servers ===`);
-                    registry.listServers();
+            try {
+                const connectionMethod = this.getNodeParameter('connectionMethod', i);
+                let serverId;
+                switch (connectionMethod) {
+                    case 'custom':
+                        serverId = this.getNodeParameter('customServerId', i);
+                        break;
+                    case 'fromContext':
+                        const activeServers = Object.entries(executionContext.servers || {})
+                            .filter(([_, info]) => info.active === true);
+                        if (activeServers.length === 0) {
+                            throw new Error('No active WebSocket servers found in execution context');
+                        }
+                        serverId = activeServers[0][0];
+                        break;
+                    case 'fromInput':
+                    default:
+                        const serverIdProperty = this.getNodeParameter('serverIdProperty', i);
+                        serverId = items[i].json[serverIdProperty];
+                }
+                const wss = registry.getServer(serverId);
+                if (!wss) {
+                    throw new Error(`WebSocket server with ID ${serverId} not found`);
+                }
+                const clientMethod = this.getNodeParameter('clientMethod', i);
+                let clientId;
+                switch (clientMethod) {
+                    case 'custom':
+                        clientId = this.getNodeParameter('customClientId', i);
+                        break;
+                    case 'broadcast':
+                        clientId = undefined;
+                        break;
+                    case 'fromInput':
+                    default:
+                        const clientIdProperty = this.getNodeParameter('clientIdProperty', i);
+                        clientId = items[i].json[clientIdProperty];
+                }
+                const isJsonResponse = this.getNodeParameter('jsonResponse', i);
+                let messageData;
+                if (isJsonResponse) {
+                    const responseJson = this.getNodeParameter('responseJson', i);
+                    messageData = JSON.stringify(responseJson);
+                }
+                else {
+                    messageData = this.getNodeParameter('responseData', i);
+                }
+                if (clientId) {
                     const client = registry.getClient(serverId, clientId);
                     if (!client) {
-                        if (port && serverId !== `ws-${port}`) {
-                            console.error(`[DEBUG] Trying legacy server ID ws-${port}`);
-                            const legacyClient = registry.getClient(`ws-${port}`, clientId);
-                            if (legacyClient) {
-                                console.error(`[DEBUG] Found client using legacy server ID`);
-                                lastError = null;
-                                const response = typeof responseData === 'object' ? JSON.stringify(responseData) : responseData;
-                                await new Promise((resolve, reject) => {
-                                    legacyClient.send(response, (err) => {
-                                        if (err) {
-                                            console.error(`[DEBUG] Error sending response on attempt ${attempt + 1}:`, err);
-                                            reject(err);
-                                        }
-                                        else {
-                                            resolve();
-                                        }
-                                    });
-                                });
-                                console.error(`[DEBUG] Response sent to client ${clientId} on legacy server ws-${port}`);
-                                success = true;
-                                returnData.push(item);
-                                break;
-                            }
-                        }
-                        lastError = new Error(`WebSocket client ${clientId} not found on server ${serverId}`);
-                        console.error(`[DEBUG] Client not found on attempt ${attempt + 1}`);
-                        continue;
+                        throw new Error(`Client with ID ${clientId} not found on server ${serverId}`);
                     }
-                    const response = typeof responseData === 'object' ? JSON.stringify(responseData) : responseData;
-                    await new Promise((resolve, reject) => {
-                        client.send(response, (err) => {
-                            if (err) {
-                                console.error(`[DEBUG] Error sending response on attempt ${attempt + 1}:`, err);
-                                reject(err);
+                    let success = false;
+                    let lastError;
+                    const maxRetries = 3;
+                    const retryDelay = 500;
+                    for (let attempt = 0; attempt < maxRetries; attempt++) {
+                        try {
+                            if (attempt > 0) {
+                                console.error(`[DEBUG-RESPONSE] Retry attempt ${attempt + 1} to send message`);
+                                await new Promise(resolve => setTimeout(resolve, retryDelay));
                             }
-                            else {
-                                resolve();
+                            if (client.readyState !== ws_1.default.OPEN) {
+                                throw new Error(`WebSocket not open (state: ${client.readyState})`);
                             }
-                        });
-                    });
-                    console.error(`[DEBUG] Response sent to client ${clientId} on server ${serverId}`);
-                    success = true;
-                    returnData.push(item);
-                    break;
+                            await new Promise((resolve, reject) => {
+                                client.send(messageData, (error) => {
+                                    if (error) {
+                                        reject(error);
+                                    }
+                                    else {
+                                        resolve();
+                                    }
+                                });
+                            });
+                            console.error(`[DEBUG-RESPONSE] Message sent to client ${clientId} on server ${serverId}`);
+                            success = true;
+                            break;
+                        }
+                        catch (error) {
+                            lastError = error;
+                            console.error(`[DEBUG-RESPONSE] Error on attempt ${attempt + 1}:`, error.message);
+                        }
+                    }
+                    if (!success) {
+                        throw lastError || new Error('Failed to send message after retries');
+                    }
                 }
-                catch (error) {
-                    console.error(`[DEBUG] Error on attempt ${attempt + 1}:`, error);
-                    lastError = error;
+                else {
+                    let clientCount = 0;
+                    registry.broadcastToServer(serverId, messageData, () => clientCount++);
+                    console.error(`[DEBUG-RESPONSE] Message broadcast to ${clientCount} clients on server ${serverId}`);
                 }
+                const outputItem = { ...items[i].json };
+                outputItem.success = true;
+                outputItem.serverId = serverId;
+                outputItem.clientId = clientId;
+                if (executionContext.servers && executionContext.servers[serverId]) {
+                    outputItem.serverInfo = executionContext.servers[serverId];
+                }
+                returnData.push({ json: outputItem });
             }
-            if (!success && lastError) {
-                throw lastError;
+            catch (error) {
+                console.error(`[DEBUG-RESPONSE] Error in WebSocket response:`, error);
+                const outputItem = { ...items[i].json };
+                outputItem.success = false;
+                outputItem.error = error.message || 'Unknown error';
+                returnData.push({ json: outputItem });
             }
         }
         return [returnData];

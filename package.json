@@ -1,21 +1,22 @@
 {
-  "name": "n8n-nodes-websocket",
-  "version": "2.0.0",
-  "description": "n8n WebSocket nodes with workflow-based paths",
+  "name": "n8n-nodes-websocket-standalone",
+  "version": "1.1.0",
+  "description": "n8n WebSocket nodes with workflow-based paths - Standalone server implementation with connection stability",
   "keywords": [
     "n8n-community-node-package",
     "n8n-node-package",
-    "websocket"
+    "websocket",
+    "standalone"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/subinksoman/n8n-nodes-websocket",
+  "homepage": "https://github.com/subinksoman/n8n-nodes-websocket-standalone",
   "author": {
     "name": "Subin Soman",
     "email": "subinksoman@gmail.com"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/subinksoman/n8n-nodes-websocket.git"
+    "url": "git+https://github.com/subinksoman/n8n-nodes-websocket-standalone.git"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
