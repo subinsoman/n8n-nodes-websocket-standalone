@@ -1,253 +1,182 @@
-import * as WebSocket from 'ws';
-import * as http from 'http';
+import WebSocket from 'ws';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
-export interface WebSocketClient extends WebSocket {
-  id: string;
-  isAlive: boolean;
+interface IServerInfo {
+	port: number;
+	path: string;
+	clients: Map<string, WebSocket>;
 }
 
-interface ServerConfig {
-  port: number;
-  path: string;
-}
-
-interface ServerInstance {
-  server: http.Server;
-  wss: WebSocket.Server;
-  clients: Map<string, WebSocketClient>;
-  config: ServerConfig;
-  heartbeat?: NodeJS.Timeout;
+interface IServerConfig {
+	port: number;
+	path: string;
 }
 
 export class WebSocketRegistry {
-  private static instance: WebSocketRegistry;
-  private servers: Map<string, ServerInstance> = new Map();
-  private initializationPromise: Promise<void> | null = null;
+	private static instance: WebSocketRegistry;
+	private servers: Map<string, { wss: WebSocket.Server; clients: Map<string, WebSocket> }>;
+	private readonly registryPath: string;
 
-  private constructor() {
-    // Ensure cleanup on process exit
-    process.on('exit', () => {
-      this.cleanup();
-    });
-    
-    process.on('SIGINT', () => {
-      this.cleanup();
-      process.exit();
-    });
-  }
+	private constructor() {
+		this.servers = new Map();
+		this.registryPath = path.join(os.tmpdir(), 'n8n-websocket-registry.json');
+		this.loadRegistry();
+	}
 
-  private cleanup(): void {
-    console.error('[DEBUG] Cleaning up WebSocket Registry');
-    for (const [serverId, instance] of this.servers) {
-      try {
-        instance.wss.close();
-        instance.server.close();
-        instance.clients.clear();
-        console.error(`[DEBUG] Cleaned up server ${serverId}`);
-      } catch (error) {
-        console.error(`[DEBUG] Error cleaning up server ${serverId}:`, error);
-      }
-    }
-    this.servers.clear();
-  }
+	public static getInstance(): WebSocketRegistry {
+		if (!WebSocketRegistry.instance) {
+			WebSocketRegistry.instance = new WebSocketRegistry();
+		}
+		return WebSocketRegistry.instance;
+	}
 
-  public static getInstance(): WebSocketRegistry {
-    if (!WebSocketRegistry.instance) {
-      console.error('[DEBUG] Creating new WebSocketRegistry instance');
-      WebSocketRegistry.instance = new WebSocketRegistry();
-    }
-    return WebSocketRegistry.instance;
-  }
+	private loadRegistry() {
+		try {
+			if (fs.existsSync(this.registryPath)) {
+				const data = JSON.parse(fs.readFileSync(this.registryPath, 'utf8')) as Record<string, IServerInfo>;
+				// Recreate servers from stored configurations
+				Object.entries(data).forEach(([serverId, serverInfo]) => {
+					if (!this.servers.has(serverId)) {
+						this.createServer(serverId, {
+							port: serverInfo.port,
+							path: serverInfo.path,
+						});
+					}
+				});
+			}
+		} catch (error) {
+			console.error('[DEBUG] Error loading registry:', error);
+		}
+	}
 
-  private async initialize(): Promise<void> {
-    if (!this.initializationPromise) {
-      this.initializationPromise = new Promise((resolve) => {
-        console.error('[DEBUG] Initializing WebSocketRegistry');
-        // Add any async initialization here if needed
-        resolve();
-      });
-    }
-    return this.initializationPromise;
-  }
+	private saveRegistry() {
+		try {
+			const data: { [key: string]: IServerInfo } = {};
+			this.servers.forEach(({ wss, clients }, serverId) => {
+				const address = wss.address();
+				if (address && typeof address === 'object') {
+					data[serverId] = {
+						port: address.port,
+						path: wss.options.path as string,
+						clients: clients,
+					};
+				}
+			});
+			fs.writeFileSync(this.registryPath, JSON.stringify(data, null, 2));
+		} catch (error) {
+			console.error('[DEBUG] Error saving registry:', error);
+		}
+	}
 
-  public listServers(): void {
-    console.log('\n=== Available WebSocket Servers ===');
-    if (this.servers.size === 0) {
-      console.log('No servers currently registered');
-    } else {
-      this.servers.forEach((instance, serverId) => {
-        console.log(`\nServer ID: ${serverId}`);
-        console.log(`Port: ${instance.config.port}`);
-        console.log(`Path: ${instance.config.path}`);
-        console.log(`Active Clients: ${instance.clients.size}`);
-        instance.clients.forEach((client, clientId) => {
-          console.log(`  - Client ID: ${clientId}`);
-        });
-      });
-    }
-    console.log('================================\n');
-  }
+	private createServer(serverId: string, config: IServerConfig) {
+		const wss = new WebSocket.Server(config);
+		const clients = new Map<string, WebSocket>();
 
-  public async getOrCreateServer(serverId: string, config: ServerConfig): Promise<WebSocket.Server> {
-    await this.initialize();
-    
-    console.error(`[DEBUG] Attempting to get or create server with ID: ${serverId}`);
-    this.listServers();
-    
-    if (this.servers.has(serverId)) {
-      const existingServer = this.servers.get(serverId)!;
-      console.error(`[DEBUG] Found existing server with ID: ${serverId}`);
-      
-      // Check if the server is actually running
-      try {
-        existingServer.server.address();
-        return existingServer.wss;
-      } catch (error) {
-        console.error(`[DEBUG] Existing server ${serverId} appears to be dead, recreating...`);
-        await this.closeServer(serverId);
-      }
-    }
+		wss.on('connection', (ws: WebSocket) => {
+			const clientId = Math.random().toString(36).substring(2, 8);
+			clients.set(clientId, ws);
 
-    console.error(`[DEBUG] Creating new server with ID: ${serverId} on port ${config.port}`);
-    
-    return new Promise((resolve, reject) => {
-      try {
-        const server = http.createServer((req, res) => {
-          if (req.url === '/health') {
-            res.writeHead(200);
-            res.end('OK');
-          } else {
-            res.writeHead(404);
-            res.end();
-          }
-        });
+			console.error(`[DEBUG] New client connected. Server ID: ${serverId}, Client ID: ${clientId}`);
+			console.error(`[DEBUG] Active Clients: ${clients.size}`);
+			this.listClients(serverId);
 
-        const wss = new WebSocket.Server({ server, path: config.path });
-        const clients: Map<string, WebSocketClient> = new Map();
+			ws.on('message', (message: WebSocket.Data) => {
+				console.error(`[DEBUG] Received message from client ${clientId} on server ${serverId}`);
+				try {
+					const data = JSON.parse(message.toString());
+					wss.emit('message', { ...data, clientId });
+				} catch (error) {
+					wss.emit('message', { message: message.toString(), clientId });
+				}
+			});
 
-        server.on('error', (error) => {
-          console.error(`[DEBUG] Server error for ${serverId}:`, error);
-          this.removeServer(serverId);
-          reject(error);
-        });
+			ws.on('close', () => {
+				clients.delete(clientId);
+				console.error(`[DEBUG] Client ${clientId} disconnected from server ${serverId}`);
+				console.error(`[DEBUG] Active Clients: ${clients.size}`);
+				this.listClients(serverId);
+				this.saveRegistry();
+			});
+		});
 
-        wss.on('connection', (ws: WebSocketClient, req: http.IncomingMessage) => {
-          ws.id = Math.random().toString(36).substring(7);
-          ws.isAlive = true;
-          clients.set(ws.id, ws);
-          console.error(`[DEBUG] New client connected. Server ID: ${serverId}, Client ID: ${ws.id}`);
-          this.listServers();
+		this.servers.set(serverId, { wss, clients });
+		this.saveRegistry();
+		return wss;
+	}
 
-          ws.on('pong', () => {
-            ws.isAlive = true;
-          });
+	public async getOrCreateServer(serverId: string, config: IServerConfig): Promise<WebSocket.Server> {
+		this.loadRegistry(); // Reload registry to get latest state
+		
+		const server = this.servers.get(serverId);
+		if (server) {
+			return server.wss;
+		}
 
-          ws.on('message', (data: WebSocket.Data) => {
-            let message: any;
-            try {
-              message = JSON.parse(data.toString());
-            } catch (error) {
-              message = data.toString();
-            }
-            console.error(`[DEBUG] Received message from client ${ws.id} on server ${serverId}`);
-            wss.emit('message', {
-              message,
-              timestamp: new Date().toISOString(),
-              clientId: ws.id,
-              serverId: serverId,
-            });
-          });
+		return this.createServer(serverId, config);
+	}
 
-          ws.on('close', () => {
-            console.error(`[DEBUG] Client disconnected. Server ID: ${serverId}, Client ID: ${ws.id}`);
-            clients.delete(ws.id);
-            this.listServers();
-          });
+	public getServer(serverId: string): WebSocket.Server | undefined {
+		this.loadRegistry(); // Reload registry to get latest state
+		return this.servers.get(serverId)?.wss;
+	}
 
-          ws.on('error', () => {
-            console.error(`[DEBUG] Client error. Server ID: ${serverId}, Client ID: ${ws.id}`);
-            clients.delete(ws.id);
-            this.listServers();
-          });
-        });
+	public getClient(serverId: string, clientId: string): WebSocket | undefined {
+		const server = this.servers.get(serverId);
+		return server?.clients.get(clientId);
+	}
 
-        server.listen(config.port, () => {
-          console.error(`[DEBUG] WebSocket server is running on port ${config.port} with ID ${serverId}`);
-          
-          // Set up the heartbeat interval
-          const interval = setInterval(() => {
-            wss.clients.forEach((ws) => {
-              const client = ws as WebSocketClient;
-              if (client.isAlive === false) {
-                console.error(`[DEBUG] Removing dead client. Server ID: ${serverId}, Client ID: ${client.id}`);
-                clients.delete(client.id);
-                return client.terminate();
-              }
-              client.isAlive = false;
-              client.ping();
-            });
-          }, 30000);
+	public async closeServer(serverId: string): Promise<void> {
+		console.error(`[DEBUG] Attempting to close server with ID: ${serverId}`);
+		const server = this.servers.get(serverId);
+		
+		if (server) {
+			// Close all client connections
+			server.clients.forEach((client) => {
+				try {
+					client.close();
+				} catch (error) {
+					console.error(`[DEBUG] Error closing client connection:`, error);
+				}
+			});
 
-          // Store the interval for cleanup
-          const instance = { server, wss, clients, config, heartbeat: interval };
-          this.servers.set(serverId, instance);
-          console.error(`[DEBUG] Server created and stored with ID: ${serverId}`);
-          this.listServers();
-          resolve(wss);
-        });
-      } catch (error) {
-        console.error(`[DEBUG] Failed to create server ${serverId}:`, error);
-        reject(error);
-      }
-    });
-  }
+			// Close the server
+			await new Promise<void>((resolve) => {
+				server.wss.close(() => {
+					console.error(`[DEBUG] Server closed successfully. ID: ${serverId}`);
+					resolve();
+				});
+			});
 
-  public async closeServer(serverId: string): Promise<void> {
-    console.error(`[DEBUG] Attempting to close server with ID: ${serverId}`);
-    const instance = this.servers.get(serverId);
-    if (instance) {
-      try {
-        if (instance.heartbeat) {
-          clearInterval(instance.heartbeat);
-        }
-        instance.wss.close();
-        instance.server.close();
-        instance.clients.clear();
-        this.servers.delete(serverId);
-        console.error(`[DEBUG] Server closed successfully. ID: ${serverId}`);
-      } catch (error) {
-        console.error(`[DEBUG] Error closing server ${serverId}:`, error);
-        // Clean up anyway
-        this.servers.delete(serverId);
-      }
-    } else {
-      console.error(`[DEBUG] No server found to close. ID: ${serverId}`);
-    }
-    this.listServers();
-  }
+			this.servers.delete(serverId);
+			this.saveRegistry();
+		}
+	}
 
-  public getServer(serverId: string): ServerInstance | undefined {
-    console.error(`[DEBUG] Attempting to get server with ID: ${serverId}`);
-    const server = this.servers.get(serverId);
-    if (server) {
-      try {
-        // Verify the server is actually running
-        server.server.address();
-        console.error(`[DEBUG] Found server with ID: ${serverId}`);
-        return server;
-      } catch (error) {
-        console.error(`[DEBUG] Server ${serverId} exists but appears to be dead`);
-        this.servers.delete(serverId);
-        return undefined;
-      }
-    }
-    console.error(`[DEBUG] No server found with ID: ${serverId}`);
-    return undefined;
-  }
+	public listServers(): void {
+		this.loadRegistry(); // Reload registry to get latest state
+		
+		console.error('=== Available WebSocket Servers ===');
+		this.servers.forEach(({ wss, clients }, serverId) => {
+			const address = wss.address();
+			if (address && typeof address === 'object') {
+				console.error(`Server ID: ${serverId}`);
+				console.error(`Port: ${address.port}`);
+				console.error(`Path: ${wss.options.path}`);
+				console.error(`Active Clients: ${clients.size}`);
+				this.listClients(serverId);
+			}
+		});
+		console.error('================================');
+	}
 
-  public removeServer(serverId: string): void {
-    console.log(`Removing server with ID: ${serverId}`);
-    this.servers.delete(serverId);
-    this.listServers();
-  }
+	private listClients(serverId: string): void {
+		const server = this.servers.get(serverId);
+		if (server) {
+			server.clients.forEach((_, clientId) => {
+				console.error(`  - Client ID: ${clientId}`);
+			});
+		}
+	}
 } 
