@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebSocketResponse = void 0;
-const n8n_workflow_1 = require("n8n-workflow");
 const WebSocketRegistry_1 = require("../WebSocketRegistry");
 class WebSocketResponse {
     constructor() {
@@ -15,8 +14,8 @@ class WebSocketResponse {
             defaults: {
                 name: 'WebSocket Response',
             },
-            inputs: [{ type: n8n_workflow_1.NodeConnectionType.Main }],
-            outputs: [{ type: n8n_workflow_1.NodeConnectionType.Main }],
+            inputs: ['main'],
+            outputs: ['main'],
             properties: [
                 {
                     displayName: 'Response Data',
@@ -43,7 +42,7 @@ class WebSocketResponse {
             console.error(`[DEBUG] Processing WebSocket Response - Input data:`, JSON.stringify(item.json, null, 2));
             if (!serverId || !clientId) {
                 console.error(`[DEBUG] Missing serverId or clientId in input data:`, item.json);
-                throw new n8n_workflow_1.NodeOperationError(this.getNode(), 'Missing serverId or clientId in the input data');
+                throw new Error('Missing serverId or clientId in the input data');
             }
             console.error(`[DEBUG] Processing WebSocket Response ===`);
             console.error(`[DEBUG] Server ID: ${serverId}`);
@@ -61,13 +60,13 @@ class WebSocketResponse {
                     registry.listServers();
                     const server = registry.getServer(serverId);
                     if (!server) {
-                        lastError = new n8n_workflow_1.NodeOperationError(this.getNode(), `WebSocket server ${serverId} not found`);
+                        lastError = new Error(`WebSocket server ${serverId} not found`);
                         console.error(`[DEBUG] Server not found on attempt ${attempt + 1}`);
                         continue;
                     }
                     const client = server.clients.get(clientId);
                     if (!client) {
-                        lastError = new n8n_workflow_1.NodeOperationError(this.getNode(), `WebSocket client ${clientId} not found on server ${serverId}`);
+                        lastError = new Error(`WebSocket client ${clientId} not found on server ${serverId}`);
                         console.error(`[DEBUG] Client not found on attempt ${attempt + 1}`);
                         continue;
                     }

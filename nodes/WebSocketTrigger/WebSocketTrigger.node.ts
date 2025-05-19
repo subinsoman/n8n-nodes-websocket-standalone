@@ -3,7 +3,6 @@ import {
 	INodeTypeDescription,
 	ITriggerResponse,
 	ITriggerFunctions,
-	NodeConnectionType,
 	INodeParameters,
 } from 'n8n-workflow';
 import { WebSocketRegistry } from '../WebSocketRegistry';
@@ -20,7 +19,7 @@ export class WebSocketTrigger implements INodeType {
 			name: 'WebSocket Trigger',
 		},
 		inputs: [],
-		outputs: [{ type: NodeConnectionType.Main }],
+		outputs: ['main'],
 		properties: [
 			{
 				displayName: 'Path',
