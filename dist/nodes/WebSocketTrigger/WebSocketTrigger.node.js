@@ -18,6 +18,22 @@ class WebSocketTrigger {
             outputs: ['main'],
             properties: [
                 {
+                    displayName: 'Port',
+                    name: 'port',
+                    type: 'number',
+                    default: 5680,
+                    required: true,
+                    description: 'The port to listen on',
+                },
+                {
+                    displayName: 'Path',
+                    name: 'path',
+                    type: 'string',
+                    default: '/ws',
+                    required: true,
+                    description: 'The WebSocket server path',
+                },
+                {
                     displayName: 'Info',
                     name: 'info',
                     type: 'notice',
@@ -30,7 +46,7 @@ class WebSocketTrigger {
                     options: [
                         {
                             name: 'info',
-                            value: 'The WebSocket server will be available at:\n- Primary: ws://localhost:5678/workflow/{workflowId}\n- Fallback: ws://localhost:5679/workflow/{workflowId} (if n8n server is not accessible)',
+                            value: 'The WebSocket server will be available at: ws://localhost:{port}{path}',
                         },
                     ],
                 },
@@ -38,16 +54,16 @@ class WebSocketTrigger {
         };
     }
     async trigger() {
-        const workflowId = this.getWorkflow().id;
-        const path = `/workflow/${workflowId}`;
-        const serverId = `ws-${workflowId}`;
+        const port = this.getNodeParameter('port');
+        const path = this.getNodeParameter('path');
+        const serverId = `ws-${port}`;
         console.error(`[DEBUG] Creating WebSocket server with ID: ${serverId}`);
         const registry = WebSocketRegistry_1.WebSocketRegistry.getInstance();
         console.error(`[DEBUG] Current WebSocket Servers (Before Creation) ===`);
         registry.listServers();
         try {
             await registry.closeServer(serverId);
-            const wss = await registry.getOrCreateServer(serverId, { path });
+            const wss = await registry.getOrCreateServer(serverId, { port, path });
             console.error(`[DEBUG] WebSocket server created/retrieved successfully`);
             const executeTrigger = async (data) => {
                 try {
@@ -55,6 +71,7 @@ class WebSocketTrigger {
                         ...data,
                         serverId,
                         path,
+                        port,
                         clientId: data.clientId,
                     };
                     console.error(`[DEBUG] Trigger received message. Server ID: ${serverId}, Client ID: ${data.clientId}`);
