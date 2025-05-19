@@ -44,6 +44,74 @@ npm install n8n-nodes-websocket-standalone
 3. Set your response data (JSON or plain text)
 4. The node will send the response to the specified client(s)
 
+## Detailed Configuration
+
+### WebSocket Trigger Node Configuration
+
+The WebSocket Trigger node has the following configuration options:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| Port | Number | 5680 | The port on which the WebSocket server will listen |
+| Path | String | /ws | The URL path for the WebSocket endpoint |
+| Connection ID | String | _empty_ | Optional custom identifier for the server. If not provided, the port will be used |
+
+When a WebSocket message is received, the node will trigger the workflow and provide the following output data:
+
+```json
+{
+  "message": "Message content from client",
+  "serverId": "ws-5680",
+  "path": "/ws",
+  "port": 5680,
+  "clientId": "abc123",
+  "nodeId": "123456",
+  "executionId": "7890",
+  "contextInfo": {
+    "active": true
+  }
+}
+```
+
+### WebSocket Response Node Configuration
+
+The WebSocket Response node has the following configuration options:
+
+| Parameter | Type | Options | Default | Description |
+|-----------|------|---------|---------|-------------|
+| Connection ID Method | Dropdown | From Input, Custom, Use Context | From Input | How to determine which server to send the response to |
+| Server ID Property | String | - | serverId | The property in the input data containing the server ID (when using "From Input") |
+| Custom Server ID | String | - | _empty_ | The server ID to use (when using "Custom") |
+| Client ID Method | Dropdown | From Input, Custom, Broadcast | From Input | How to determine which client to send the response to |
+| Client ID Property | String | - | clientId | The property in the input data containing the client ID (when using "From Input") |
+| Custom Client ID | String | - | _empty_ | The client ID to use (when using "Custom") |
+| JSON Response | Boolean | - | true | Whether to format the response as JSON |
+| Response Data | String | - | `={{ JSON.stringify($json) }}` | The response data to send (when JSON Response is false) |
+| Response JSON | JSON | - | `={{ $json }}` | The JSON data to send (when JSON Response is true) |
+
+### Example Workflow Setup
+
+Here's a complete example of how to set up a workflow with trigger and response:
+
+1. **Start with a WebSocket Trigger Node**
+   - Set Port: `5680`
+   - Set Path: `/ws`
+   - Leave Connection ID empty (will use port as identifier)
+
+2. **Add processing nodes as needed**
+   - You can manipulate the incoming data as required
+   - Make sure to preserve the `serverId` and `clientId` fields if you need to respond
+
+3. **End with a WebSocket Response Node**
+   - Connection ID Method: `From Input`
+   - Server ID Property: `serverId`
+   - Client ID Method: `From Input`
+   - Client ID Property: `clientId`
+   - Enable JSON Response
+   - Response JSON: `={{ {"result": "success", "message": "Processed your request", "data": $json.message} }}`
+
+This setup will ensure that responses are sent back to the same client that triggered the workflow.
+
 ### Example Client Code (Browser)
 ```javascript
 // Connect to your configured WebSocket server
@@ -79,6 +147,33 @@ ws.on('message', function message(data) {
   console.log('Received:', data);
 });
 ```
+
+## Troubleshooting
+
+### Connection Issues
+
+If you're having trouble with WebSocket connections:
+
+1. **Check if the server is running**
+   - Look for log messages like `[DEBUG-TRIGGER] WebSocket server created/retrieved successfully`
+   - Verify the port is not already in use by another service
+
+2. **Connection is closing too quickly**
+   - Check that you're using version 1.1.4 or later which implements the connection persistence
+   - Look for log messages like `[DEBUG-REGISTRY] Server soft-closed, connections maintained for ws-5680`
+
+3. **Response not reaching clients**
+   - Verify the client ID and server ID are correctly passed to the Response node
+   - Check that the client is still connected when the response is sent
+   - Look for log messages like `[DEBUG-RESPONSE] Message sent to client`
+
+### Common Errors
+
+| Error | Possible Cause | Solution |
+|-------|----------------|----------|
+| `WebSocket server with ID X not found` | Server was closed or never created | Check server configuration and workflow order |
+| `Client with ID X not found` | Client disconnected before response was sent | Implement error handling or client reconnect logic |
+| `Failed to send message after retries` | Network issues or client disconnected | Check network connectivity and client state |
 
 ## Advantages Over Other WebSocket Nodes
 
