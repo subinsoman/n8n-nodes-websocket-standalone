@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WebSocketTrigger = void 0;
+const n8n_workflow_1 = require("n8n-workflow");
 const WebSocketRegistry_1 = require("../WebSocketRegistry");
 class WebSocketTrigger {
     constructor() {
@@ -15,7 +16,7 @@ class WebSocketTrigger {
                 name: 'WebSocket Trigger',
             },
             inputs: [],
-            outputs: [{ type: "main" /* NodeConnectionType.Main */ }],
+            outputs: [{ type: n8n_workflow_1.NodeConnectionType.Main }],
             properties: [
                 {
                     displayName: 'Path',
@@ -40,20 +41,17 @@ class WebSocketTrigger {
         const nodeParameters = this.getNode().parameters;
         const path = nodeParameters.path;
         const port = nodeParameters.port;
-        // Generate server ID with the exact format expected by the response node
         const serverId = `ws-${port}`;
         console.error(`[DEBUG] Creating WebSocket server with ID: ${serverId}`);
         const registry = WebSocketRegistry_1.WebSocketRegistry.getInstance();
         console.error(`[DEBUG] Current WebSocket Servers (Before Creation) ===`);
         registry.listServers();
         try {
-            // Close any existing server on this port to avoid conflicts
             await registry.closeServer(serverId);
             const wss = await registry.getOrCreateServer(serverId, { port, path });
             console.error(`[DEBUG] WebSocket server created/retrieved successfully`);
             const executeTrigger = async (data) => {
                 try {
-                    // Include both serverId and clientId in the output
                     const outputData = {
                         ...data,
                         serverId,
@@ -69,7 +67,6 @@ class WebSocketTrigger {
                 }
             };
             wss.on('message', executeTrigger);
-            // Verify the server is running
             const server = registry.getServer(serverId);
             if (!server) {
                 throw new Error(`Failed to verify server ${serverId} is running`);

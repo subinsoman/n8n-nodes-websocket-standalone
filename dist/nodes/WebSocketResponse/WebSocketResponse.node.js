@@ -15,8 +15,8 @@ class WebSocketResponse {
             defaults: {
                 name: 'WebSocket Response',
             },
-            inputs: [{ type: "main" /* NodeConnectionType.Main */ }],
-            outputs: [{ type: "main" /* NodeConnectionType.Main */ }],
+            inputs: [{ type: n8n_workflow_1.NodeConnectionType.Main }],
+            outputs: [{ type: n8n_workflow_1.NodeConnectionType.Main }],
             properties: [
                 {
                     displayName: 'Response Data',
@@ -33,12 +33,11 @@ class WebSocketResponse {
         const items = this.getInputData();
         const returnData = [];
         const MAX_RETRIES = 3;
-        const RETRY_DELAY = 1000; // 1 second
+        const RETRY_DELAY = 1000;
         const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
         for (let i = 0; i < items.length; i++) {
             const item = items[i];
             const responseData = this.getNodeParameter('responseData', i);
-            // Get server and client IDs from the input
             const serverId = item.json.serverId;
             const clientId = item.json.clientId;
             console.error(`[DEBUG] Processing WebSocket Response - Input data:`, JSON.stringify(item.json, null, 2));
@@ -51,7 +50,6 @@ class WebSocketResponse {
             console.error(`[DEBUG] Client ID: ${clientId}`);
             let lastError = null;
             let success = false;
-            // Try multiple times to get the server and send the response
             for (let attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
                 try {
                     if (attempt > 0) {
@@ -73,7 +71,6 @@ class WebSocketResponse {
                         console.error(`[DEBUG] Client not found on attempt ${attempt + 1}`);
                         continue;
                     }
-                    // Send the response
                     const response = typeof responseData === 'object' ? JSON.stringify(responseData) : responseData;
                     await new Promise((resolve, reject) => {
                         client.send(response, (error) => {

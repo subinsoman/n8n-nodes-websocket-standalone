@@ -11,7 +11,22 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "sourceMap": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "preserveConstEnums": true,
+    "removeComments": true,
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
+    "types": [
+      "node",
+      "jest"
+    ],
+    "lib": [
+      "es2019",
+      "es2020.promise",
+      "es2020.bigint",
+      "es2020.string"
+    ]
   },
   "include": [
     "nodes/**/*",
@@ -19,6 +34,7 @@
   ],
   "exclude": [
     "node_modules/**/*",
-    "dist/**/*"
+    "dist/**/*",
+    "**/*.spec.ts"
   ]
 } 

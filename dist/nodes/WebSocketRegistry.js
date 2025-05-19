@@ -40,7 +40,6 @@ class WebSocketRegistry {
     constructor() {
         this.servers = new Map();
         this.initializationPromise = null;
-        // Ensure cleanup on process exit
         process.on('exit', () => {
             this.cleanup();
         });
@@ -75,7 +74,6 @@ class WebSocketRegistry {
         if (!this.initializationPromise) {
             this.initializationPromise = new Promise((resolve) => {
                 console.error('[DEBUG] Initializing WebSocketRegistry');
-                // Add any async initialization here if needed
                 resolve();
             });
         }
@@ -106,7 +104,6 @@ class WebSocketRegistry {
         if (this.servers.has(serverId)) {
             const existingServer = this.servers.get(serverId);
             console.error(`[DEBUG] Found existing server with ID: ${serverId}`);
-            // Check if the server is actually running
             try {
                 existingServer.server.address();
                 return existingServer.wss;
@@ -174,7 +171,6 @@ class WebSocketRegistry {
                 });
                 server.listen(config.port, () => {
                     console.error(`[DEBUG] WebSocket server is running on port ${config.port} with ID ${serverId}`);
-                    // Set up the heartbeat interval
                     const interval = setInterval(() => {
                         wss.clients.forEach((ws) => {
                             const client = ws;
@@ -187,7 +183,6 @@ class WebSocketRegistry {
                             client.ping();
                         });
                     }, 30000);
-                    // Store the interval for cleanup
                     const instance = { server, wss, clients, config, heartbeat: interval };
                     this.servers.set(serverId, instance);
                     console.error(`[DEBUG] Server created and stored with ID: ${serverId}`);
@@ -217,7 +212,6 @@ class WebSocketRegistry {
             }
             catch (error) {
                 console.error(`[DEBUG] Error closing server ${serverId}:`, error);
-                // Clean up anyway
                 this.servers.delete(serverId);
             }
         }
@@ -231,7 +225,6 @@ class WebSocketRegistry {
         const server = this.servers.get(serverId);
         if (server) {
             try {
-                // Verify the server is actually running
                 server.server.address();
                 console.error(`[DEBUG] Found server with ID: ${serverId}`);
                 return server;

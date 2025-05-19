@@ -3,8 +3,6 @@ import {
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeConnectionType,
-	NodeOperationError,
 } from 'n8n-workflow';
 import { WebSocketRegistry } from '../WebSocketRegistry';
 
@@ -19,8 +17,8 @@ export class WebSocketResponse implements INodeType {
 		defaults: {
 			name: 'WebSocket Response',
 		},
-		inputs: [{ type: NodeConnectionType.Main }],
-		outputs: [{ type: NodeConnectionType.Main }],
+		inputs: ['main'],
+		outputs: ['main'],
 		properties: [
 			{
 				displayName: 'Response Data',
@@ -54,10 +52,7 @@ export class WebSocketResponse implements INodeType {
 
 			if (!serverId || !clientId) {
 				console.error(`[DEBUG] Missing serverId or clientId in input data:`, item.json);
-				throw new NodeOperationError(
-					this.getNode(),
-					'Missing serverId or clientId in the input data',
-				);
+				throw new Error('Missing serverId or clientId in the input data');
 			}
 
 			console.error(`[DEBUG] Processing WebSocket Response ===`);
@@ -81,20 +76,14 @@ export class WebSocketResponse implements INodeType {
 
 					const server = registry.getServer(serverId);
 					if (!server) {
-						lastError = new NodeOperationError(
-							this.getNode(),
-							`WebSocket server ${serverId} not found`,
-						);
+						lastError = new Error(`WebSocket server ${serverId} not found`);
 						console.error(`[DEBUG] Server not found on attempt ${attempt + 1}`);
 						continue;
 					}
 
 					const client = server.clients.get(clientId);
 					if (!client) {
-						lastError = new NodeOperationError(
-							this.getNode(),
-							`WebSocket client ${clientId} not found on server ${serverId}`,
-						);
+						lastError = new Error(`WebSocket client ${clientId} not found on server ${serverId}`);
 						console.error(`[DEBUG] Client not found on attempt ${attempt + 1}`);
 						continue;
 					}
