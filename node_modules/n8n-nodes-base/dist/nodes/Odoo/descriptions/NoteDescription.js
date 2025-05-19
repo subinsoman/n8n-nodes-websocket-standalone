@@ -1,0 +1,160 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.noteDescription = exports.noteOperations = void 0;
+exports.noteOperations = [
+    {
+        displayName: 'Operation',
+        name: 'operation',
+        type: 'options',
+        default: 'create',
+        noDataExpression: true,
+        displayOptions: {
+            show: {
+                resource: ['note'],
+            },
+        },
+        options: [
+            {
+                name: 'Create',
+                value: 'create',
+                description: 'Create a new note',
+                action: 'Create a note',
+            },
+            {
+                name: 'Delete',
+                value: 'delete',
+                description: 'Delete a note',
+                action: 'Delete a note',
+            },
+            {
+                name: 'Get',
+                value: 'get',
+                description: 'Get a note',
+                action: 'Get a note',
+            },
+            {
+                name: 'Get Many',
+                value: 'getAll',
+                description: 'Get many notes',
+                action: 'Get many notes',
+            },
+            {
+                name: 'Update',
+                value: 'update',
+                description: 'Update a note',
+                action: 'Update a note',
+            },
+        ],
+    },
+];
+exports.noteDescription = [
+    {
+        displayName: 'Memo',
+        name: 'memo',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: {
+            show: {
+                operation: ['create'],
+                resource: ['note'],
+            },
+        },
+    },
+    {
+        displayName: 'Note ID',
+        name: 'noteId',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: {
+            show: {
+                operation: ['get', 'delete'],
+                resource: ['note'],
+            },
+        },
+    },
+    {
+        displayName: 'Return All',
+        name: 'returnAll',
+        type: 'boolean',
+        displayOptions: {
+            show: {
+                resource: ['note'],
+                operation: ['getAll'],
+            },
+        },
+        default: false,
+        description: 'Whether to return all results or only up to a given limit',
+    },
+    {
+        displayName: 'Limit',
+        name: 'limit',
+        type: 'number',
+        default: 50,
+        displayOptions: {
+            show: {
+                resource: ['note'],
+                operation: ['getAll'],
+                returnAll: [false],
+            },
+        },
+        typeOptions: {
+            minValue: 1,
+            maxValue: 1000,
+        },
+        description: 'Max number of results to return',
+    },
+    {
+        displayName: 'Options',
+        name: 'options',
+        type: 'collection',
+        default: {},
+        placeholder: 'Add Field',
+        displayOptions: {
+            show: {
+                operation: ['getAll', 'get'],
+                resource: ['note'],
+            },
+        },
+        options: [
+            {
+                displayName: 'Fields to Include',
+                name: 'fieldsList',
+                type: 'multiOptions',
+                description: 'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code-examples/expressions/">expression</a>',
+                default: [],
+                typeOptions: {
+                    loadOptionsMethod: 'getModelFields',
+                },
+            },
+        ],
+    },
+    {
+        displayName: 'Note ID',
+        name: 'noteId',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: {
+            show: {
+                operation: ['update'],
+                resource: ['note'],
+            },
+        },
+    },
+    {
+        displayName: 'Memo',
+        name: 'memo',
+        type: 'string',
+        default: '',
+        required: true,
+        displayOptions: {
+            show: {
+                operation: ['update'],
+                resource: ['note'],
+            },
+        },
+    },
+];
+//# sourceMappingURL=NoteDescription.js.map

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>n8n WebSocket Server Test</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    #log { border: 1px solid #ccc; padding: 1em; height: 200px; overflow-y: auto; background: #f9f9f9; }
+    input, button { font-size: 1em; }
+  </style>
+</head>
+<body>
+  <h2>n8n WebSocket Server Test</h2>
+  <label>
+    WebSocket URL:
+    <input id="wsUrl" type="text" value="ws://localhost:5678/ws" size="40">
+  </label>
+  <button onclick="connectWS()">Connect</button>
+  <button onclick="disconnectWS()">Disconnect</button>
+  <br><br>
+  <label>
+    Message:
+    <input id="message" type="text" value="Hello n8n!">
+  </label>
+  <button onclick="sendMessage()">Send</button>
+  <br><br>
+  <div id="log"></div>
+
+  <script>
+    let ws;
+
+    function log(msg) {
+      const logDiv = document.getElementById('log');
+      logDiv.innerHTML += msg + '<br>';
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function connectWS() {
+      const url = document.getElementById('wsUrl').value;
+      ws = new WebSocket(url);
+
+      ws.onopen = () => log('<b>Connected</b> to ' + url);
+      ws.onmessage = (event) => log('<span style="color:green;">Received:</span> ' + event.data);
+      ws.onclose = (event) => log('<b>Disconnected</b> (code: ' + event.code + ')');
+      ws.onerror = (err) => log('<span style="color:red;">Error:</span> ' + err.message);
+    }
+
+    function disconnectWS() {
+      if (ws) {
+        ws.close();
+        log('<b>Disconnect requested</b>');
+      }
+    }
+
+    function sendMessage() {
+      const msg = document.getElementById('message').value;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(msg);
+        log('<span style="color:blue;">Sent:</span> ' + msg);
+      } else {
+        log('<span style="color:red;">WebSocket not connected.</span>');
+      }
+    }
+  </script>
+</body>
+</html> 

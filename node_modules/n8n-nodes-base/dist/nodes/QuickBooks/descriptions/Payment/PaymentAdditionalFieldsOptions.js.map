@@ -1,0 +1,1 @@
+{"version":3,"file":"PaymentAdditionalFieldsOptions.js","sourceRoot":"","sources":["../../../../../nodes/QuickBooks/descriptions/Payment/PaymentAdditionalFieldsOptions.ts"],"names":[],"mappings":";;;AAEa,QAAA,8BAA8B,GAAsB;IAChE;QACC,WAAW,EAAE,kBAAkB;QAC/B,IAAI,EAAE,SAAS;QACf,WAAW,EAAE,oCAAoC;QACjD,IAAI,EAAE,UAAU;QAChB,OAAO,EAAE,EAAE;KACX;CACD,CAAC"}

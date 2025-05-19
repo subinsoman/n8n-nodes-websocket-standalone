@@ -1,0 +1,35 @@
+# Source
+nodes/
+credentials/
+*.ts
+!*.d.ts
+
+# Development
+.git/
+.github/
+.vscode/
+.idea/
+.DS_Store
+.eslintrc.js
+.prettierrc
+jest.config.js
+tsconfig.json
+*.map
+
+# Tests
+test/
+coverage/
+*.test.ts
+*.spec.ts
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.* 
