@@ -30,13 +30,6 @@ export class WebSocketResponse implements INodeType {
 		outputs: ['main'],
 		properties: [
 			{
-				displayName: 'Server ID',
-				name: 'serverId',
-				type: 'string',
-				default: '',
-				description: 'ID of the WebSocket server to send the response to (format: ws-{port} or custom ID)',
-			},
-			{
 				displayName: 'Connection ID Method',
 				name: 'connectionMethod',
 				type: 'options',
@@ -80,13 +73,6 @@ export class WebSocketResponse implements INodeType {
 				},
 				default: 'serverId',
 				description: 'Property in the input data that contains the server ID',
-			},
-			{
-				displayName: 'Client ID',
-				name: 'clientId',
-				type: 'string',
-				default: '',
-				description: 'ID of the client to send the response to',
 			},
 			{
 				displayName: 'Client ID Method',

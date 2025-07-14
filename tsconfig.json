@@ -14,27 +14,10 @@
     "resolveJsonModule": true,
     "preserveConstEnums": true,
     "removeComments": true,
-    "typeRoots": [
-      "./node_modules/@types"
-    ],
-    "types": [
-      "node",
-      "jest"
-    ],
-    "lib": [
-      "es2019",
-      "es2020.promise",
-      "es2020.bigint",
-      "es2020.string"
-    ]
+    "typeRoots": ["./node_modules/@types"],
+    "types": ["node"],
+    "lib": ["es2019", "es2020.promise", "es2020.bigint", "es2020.string"]
   },
-  "include": [
-    "nodes/**/*",
-    "credentials/**/*"
-  ],
-  "exclude": [
-    "node_modules/**/*",
-    "dist/**/*",
-    "**/*.spec.ts"
-  ]
-} 
+  "include": ["nodes/**/*", "credentials/**/*"],
+  "exclude": ["node_modules/**/*", "dist/**/*", "**/*.spec.ts"]
+}
