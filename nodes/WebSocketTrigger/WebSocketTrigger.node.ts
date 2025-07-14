@@ -1,4 +1,4 @@
-gitimport {
+import {
   INodeType,
   INodeTypeDescription,
   ITriggerFunctions,
@@ -12,6 +12,7 @@ if (!(global as any).websocketExecutionContext) {
     servers: {},
     listeners: {},
     activeWorkflows: new Set(), // Track active workflows
+    cleanupTimeouts: new Map(), // Track cleanup timeouts
   }
 }
 
@@ -128,6 +129,36 @@ export class WebSocketTrigger implements INodeType {
         description: "How to handle server lifecycle when workflow is deactivated",
       },
       {
+        displayName: "Test Execution Behavior",
+        name: "testExecutionBehavior",
+        type: "options",
+        options: [
+          {
+            name: "Auto-stop after first message",
+            value: "auto_stop",
+          },
+          {
+            name: "Keep listening for multiple messages",
+            value: "keep_listening",
+          },
+        ],
+        default: "auto_stop",
+        description: "How to handle test executions (manual workflow runs)",
+      },
+      {
+        displayName: "Test Execution Timeout",
+        name: "testExecutionTimeout",
+        type: "number",
+        default: 30,
+        required: false,
+        description: "Timeout in seconds for test executions when 'Keep listening' is selected (0 = no timeout)",
+        displayOptions: {
+          show: {
+            testExecutionBehavior: ['keep_listening'],
+          },
+        },
+      },
+      {
         displayName: "Info",
         name: "info",
         type: "notice",
@@ -154,6 +185,8 @@ export class WebSocketTrigger implements INodeType {
     const customConnectionId = this.getNodeParameter("connectionId", "") as string
     const authentication = this.getNodeParameter("authentication") as string
     const serverSharing = this.getNodeParameter("serverSharing", "shared") as string
+    const testExecutionBehavior = this.getNodeParameter("testExecutionBehavior", "auto_stop") as string
+    const testExecutionTimeout = this.getNodeParameter("testExecutionTimeout", 30) as number
 
     // Get execution and node IDs for context tracking
     const executionId = this.getExecutionId()
@@ -170,6 +203,7 @@ export class WebSocketTrigger implements INodeType {
     console.error(`[DEBUG-TRIGGER] Creating WebSocket server with ID: ${serverId}`)
     console.error(`[DEBUG-TRIGGER] Execution ID: ${executionId}, Node ID: ${nodeId}, Workflow ID: ${safeWorkflowId}`)
     console.error(`[DEBUG-TRIGGER] Server sharing mode: ${serverSharing}`)
+    console.error(`[DEBUG-TRIGGER] Test execution behavior: ${testExecutionBehavior}`)
 
     // Use global context instead of workflow context
     const context = (global as any).websocketExecutionContext
@@ -182,6 +216,9 @@ export class WebSocketTrigger implements INodeType {
     if (!context.activeWorkflows) {
       context.activeWorkflows = new Set()
     }
+    if (!context.cleanupTimeouts) {
+      context.cleanupTimeouts = new Map()
+    }
 
     const registry = WebSocketRegistry.getInstance()
     console.error(`[DEBUG-TRIGGER] Current WebSocket Servers (Before Creation) ===`)
@@ -189,6 +226,9 @@ export class WebSocketTrigger implements INodeType {
 
     // Store reference to 'this' for use in closures
     const triggerContext = this
+
+    // Create a unique cleanup key for this execution
+    const cleanupKey = `${serverId}-${executionId}`
 
     try {
       // Detect different trigger scenarios
@@ -274,8 +314,90 @@ export class WebSocketTrigger implements INodeType {
 
       console.error(`[DEBUG-TRIGGER] Server added to execution context: ${JSON.stringify(context.servers[serverId])}`)
 
+      // Track message count for test executions
+      let messageCount = 0
+      let testTimeout: NodeJS.Timeout | null = null
+      let cleanupExecuted = false // Flag to prevent multiple cleanup executions
+
+      // Centralized cleanup function
+      const cleanupExecution = async (reason: string) => {
+        if (cleanupExecuted) {
+          console.error(`[DEBUG-TRIGGER] Cleanup already executed for ${cleanupKey}, skipping (reason: ${reason})`)
+          return
+        }
+        cleanupExecuted = true
+
+        console.error(`[DEBUG-TRIGGER] Execution cleanup triggered for ${serverId}`)
+        console.error(`[DEBUG-TRIGGER] Cleanup reason: ${reason}`)
+        
+        // Clear all timeouts for this execution
+        const timeoutInfo = context.cleanupTimeouts.get(cleanupKey)
+        if (timeoutInfo) {
+          if (timeoutInfo.executionTimeout) {
+            clearTimeout(timeoutInfo.executionTimeout)
+          }
+          if (timeoutInfo.testTimeout) {
+            clearTimeout(timeoutInfo.testTimeout)
+          }
+          context.cleanupTimeouts.delete(cleanupKey)
+        }
+        
+        // Clear test timeout if it exists
+        if (testTimeout) {
+          clearTimeout(testTimeout)
+          testTimeout = null
+        }
+        
+        // Unregister this specific execution
+        registry.unregisterExecution(serverId, executionId)
+        
+        // Check if this was a manual execution
+        const isManualExecution = triggerContext.getMode() === 'manual'
+        
+        // For manual executions, behavior depends on the setting
+        if (isManualExecution) {
+          console.error(`[DEBUG-TRIGGER] Manual execution cleanup - behavior: ${testExecutionBehavior}`)
+          
+          if (testExecutionBehavior === 'auto_stop' || reason === 'test_execution_timeout') {
+            console.error(`[DEBUG-TRIGGER] Manual execution - forcing server close`)
+            await registry.closeServer(serverId, {
+              keepClientsAlive: false,
+              executionId,
+              reason: 'manual_execution_finished'
+            })
+            
+            // Clean up global context
+            if (context.servers && context.servers[serverId]) {
+              delete context.servers[serverId]
+            }
+            if (context.listeners && context.listeners[serverId]) {
+              delete context.listeners[serverId]
+            }
+            context.activeWorkflows.delete(safeWorkflowId)
+            console.error(`[DEBUG-TRIGGER] Manual execution cleanup completed for server ${serverId}`)
+          } else {
+            console.error(`[DEBUG-TRIGGER] Manual execution with keep_listening - leaving server running`)
+          }
+          return
+        }
+        
+        // For regular executions, check if there are any remaining executions
+        const hasOtherActiveExecutions = registry.hasActiveExecutions(serverId)
+        if (!hasOtherActiveExecutions && serverSharing === 'exclusive') {
+          console.error(`[DEBUG-TRIGGER] No active executions in exclusive mode - closing server`)
+          await registry.closeServer(serverId, {
+            keepClientsAlive: false,
+            executionId,
+            reason: 'no_active_executions'
+          })
+        }
+      }
+
       const executeTrigger = async (data: any) => {
         try {
+          messageCount++
+          console.error(`[DEBUG-TRIGGER] Message ${messageCount} received. Server ID: ${serverId}, Client ID: ${data.clientId}`)
+          
           // Include comprehensive context in the output
           const outputData = {
             ...data,
@@ -287,6 +409,7 @@ export class WebSocketTrigger implements INodeType {
             workflowId: safeWorkflowId,
             clientId: data.clientId,
             serverSharing,
+            messageCount,
             contextInfo: context.servers[serverId],
             timestamp: new Date().toISOString(),
           }
@@ -296,13 +419,28 @@ export class WebSocketTrigger implements INodeType {
           // Emit the data to continue the workflow
           triggerContext.emit([triggerContext.helpers.returnJsonArray([outputData])])
           
-          // For manual executions, schedule automatic cleanup after message is processed
-          const isManualExecution = triggerContext.getMode() === 'manual'
+          // Handle test execution behavior
           if (isManualExecution) {
-            console.error(`[DEBUG-TRIGGER] Manual execution detected - scheduling automatic cleanup`)
-            setTimeout(async () => {
-              await cleanupExecution('manual_message_processed')
-            }, 1000) // 1 second delay to allow message processing
+            if (testExecutionBehavior === 'auto_stop') {
+              console.error(`[DEBUG-TRIGGER] Test execution with auto-stop - scheduling cleanup after first message`)
+              setTimeout(async () => {
+                await cleanupExecution('manual_message_processed')
+              }, 1000) // 1 second delay to allow message processing
+            } else if (testExecutionBehavior === 'keep_listening') {
+              console.error(`[DEBUG-TRIGGER] Test execution with keep_listening - continuing to listen for messages`)
+              // Clear any existing timeout
+              if (testTimeout) {
+                clearTimeout(testTimeout)
+              }
+              
+              // Set up new timeout if specified
+              if (testExecutionTimeout > 0) {
+                testTimeout = setTimeout(async () => {
+                  console.error(`[DEBUG-TRIGGER] Test execution timeout reached after ${testExecutionTimeout} seconds`)
+                  await cleanupExecution('test_execution_timeout')
+                }, testExecutionTimeout * 1000)
+              }
+            }
           }
         } catch (error) {
           console.error(`[DEBUG-TRIGGER] Error in trigger execution:`, error)
@@ -332,64 +470,51 @@ export class WebSocketTrigger implements INodeType {
       const executionCount = context.executionCounts[serverId]
       console.error(`[DEBUG-TRIGGER] Execution count for server ${serverId}: ${executionCount}`)
 
-      // Set up automatic execution cleanup
-      const cleanupExecution = async (reason: string) => {
-        console.error(`[DEBUG-TRIGGER] Execution cleanup triggered for ${serverId}`)
-        console.error(`[DEBUG-TRIGGER] Cleanup reason: ${reason}`)
-        
-        // Unregister this specific execution
-        registry.unregisterExecution(serverId, executionId)
-        
-        // Check if this was a manual execution
-        const isManualExecution = triggerContext.getMode() === 'manual'
-        
-        // For manual executions, always close the server when execution finishes
-        if (isManualExecution) {
-          console.error(`[DEBUG-TRIGGER] Manual execution detected - forcing server close`)
-          await registry.closeServer(serverId, {
-            keepClientsAlive: false,
-            executionId,
-            reason: 'manual_execution_finished'
-          })
-          
-          // Clean up global context
-          if (context.servers && context.servers[serverId]) {
-            delete context.servers[serverId]
-          }
-          if (context.listeners && context.listeners[serverId]) {
-            delete context.listeners[serverId]
-          }
-          context.activeWorkflows.delete(safeWorkflowId)
-          console.error(`[DEBUG-TRIGGER] Manual execution cleanup completed for server ${serverId}`)
-          return
-        }
-        
-        // For regular executions, check if there are any remaining executions
-        const hasOtherActiveExecutions = registry.hasActiveExecutions(serverId)
-        if (!hasOtherActiveExecutions && serverSharing === 'exclusive') {
-          console.error(`[DEBUG-TRIGGER] No active executions in exclusive mode - closing server`)
-          await registry.closeServer(serverId, {
-            keepClientsAlive: false,
-            executionId,
-            reason: 'no_active_executions'
-          })
-        }
+      // Set up automatic execution cleanup only for non-manual executions or auto-stop manual executions
+      let executionTimeout: NodeJS.Timeout | null = null
+      if (!isManualExecution || testExecutionBehavior === 'auto_stop') {
+        executionTimeout = setTimeout(async () => {
+          console.error(`[DEBUG-TRIGGER] Execution timeout reached for ${serverId}`)
+          await cleanupExecution('execution_timeout')
+        }, 30000) // 30 seconds timeout
       }
 
-      // Set up a timeout to automatically clean up after execution
-      const executionTimeout = setTimeout(async () => {
-        console.error(`[DEBUG-TRIGGER] Execution timeout reached for ${serverId}`)
-        await cleanupExecution('execution_timeout')
-      }, 30000) // 30 seconds timeout
+      // Store timeout references for cleanup coordination
+      context.cleanupTimeouts.set(cleanupKey, {
+        executionTimeout,
+        testTimeout: null // Will be set later if needed
+      })
 
       // Enhanced close function with better lifecycle management
       const closeFunction = async () => {
+        if (cleanupExecuted) {
+          console.error(`[DEBUG-TRIGGER] Close function called but cleanup already executed for ${cleanupKey}`)
+          return
+        }
+
         console.error(`[DEBUG-TRIGGER] Closing WebSocket server with ID: ${serverId}`)
         console.error(`[DEBUG-TRIGGER] Close reason: Workflow deactivation or execution end`)
         console.error(`[DEBUG-TRIGGER] Server sharing mode: ${serverSharing}`)
 
-        // Clear the execution timeout
-        clearTimeout(executionTimeout)
+        // Mark cleanup as executed to prevent race conditions
+        cleanupExecuted = true
+
+        // Clear all timeouts for this execution
+        const timeoutInfo = context.cleanupTimeouts.get(cleanupKey)
+        if (timeoutInfo) {
+          if (timeoutInfo.executionTimeout) {
+            clearTimeout(timeoutInfo.executionTimeout)
+          }
+          if (timeoutInfo.testTimeout) {
+            clearTimeout(timeoutInfo.testTimeout)
+          }
+          context.cleanupTimeouts.delete(cleanupKey)
+        }
+        
+        // Clear test timeout
+        if (testTimeout) {
+          clearTimeout(testTimeout)
+        }
 
         // Remove the listener from the server
         if (context.listeners && context.listeners[serverId]) {
@@ -415,11 +540,16 @@ export class WebSocketTrigger implements INodeType {
         let shouldForceClose = false
         let closeReason = 'workflow_deactivation'
 
-        if (isManualExecution) {
-          // Always force close for manual executions
+        if (isManualExecution && testExecutionBehavior === 'auto_stop') {
+          // Force close for manual executions with auto-stop
           shouldForceClose = true
           closeReason = 'manual_execution_finished'
-          console.error(`[DEBUG-TRIGGER] Manual execution: Force closing server`)
+          console.error(`[DEBUG-TRIGGER] Manual execution with auto-stop: Force closing server`)
+        } else if (isManualExecution && testExecutionBehavior === 'keep_listening') {
+          // Don't force close for manual executions with keep_listening
+          shouldForceClose = false
+          closeReason = 'manual_execution_keep_listening'
+          console.error(`[DEBUG-TRIGGER] Manual execution with keep_listening: Keeping server alive`)
         } else if (serverSharing === 'exclusive') {
           // In exclusive mode, always close the server when workflow deactivates
           shouldForceClose = true
@@ -466,6 +596,7 @@ export class WebSocketTrigger implements INodeType {
       console.error(`[DEBUG-TRIGGER] Error in WebSocket trigger:`, error)
       // Clean up on error
       context.activeWorkflows.delete(safeWorkflowId)
+      context.cleanupTimeouts.delete(cleanupKey)
       throw error
     }
   }
