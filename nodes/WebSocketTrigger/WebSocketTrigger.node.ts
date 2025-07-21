@@ -13,6 +13,7 @@ if (!(global as any).websocketExecutionContext) {
     listeners: {},
     activeWorkflows: new Set(), // Track active workflows
     cleanupTimeouts: new Map(), // Track cleanup timeouts
+    pendingSends: new Map<string, Promise<void>[]>(), // Typed as Map of arrays of promises
   }
 }
 
@@ -219,6 +220,9 @@ export class WebSocketTrigger implements INodeType {
     if (!context.cleanupTimeouts) {
       context.cleanupTimeouts = new Map()
     }
+    if (!context.pendingSends) {
+      context.pendingSends = new Map<string, Promise<void>[]>()
+    }
 
     const registry = WebSocketRegistry.getInstance()
     console.error(`[DEBUG-TRIGGER] Current WebSocket Servers (Before Creation) ===`)
@@ -421,12 +425,7 @@ export class WebSocketTrigger implements INodeType {
           
           // Handle test execution behavior
           if (isManualExecution) {
-            if (testExecutionBehavior === 'auto_stop') {
-              console.error(`[DEBUG-TRIGGER] Test execution with auto-stop - scheduling cleanup after first message`)
-              setTimeout(async () => {
-                await cleanupExecution('manual_message_processed')
-              }, 1000) // 1 second delay to allow message processing
-            } else if (testExecutionBehavior === 'keep_listening') {
+            if (testExecutionBehavior === 'keep_listening') {
               console.error(`[DEBUG-TRIGGER] Test execution with keep_listening - continuing to listen for messages`)
               // Clear any existing timeout
               if (testTimeout) {
@@ -440,7 +439,7 @@ export class WebSocketTrigger implements INodeType {
                   await cleanupExecution('test_execution_timeout')
                 }, testExecutionTimeout * 1000)
               }
-            }
+            } // No else block needed for 'auto_stop' – let n8n handle close
           }
         } catch (error) {
           console.error(`[DEBUG-TRIGGER] Error in trigger execution:`, error)
@@ -470,7 +469,7 @@ export class WebSocketTrigger implements INodeType {
       const executionCount = context.executionCounts[serverId]
       console.error(`[DEBUG-TRIGGER] Execution count for server ${serverId}: ${executionCount}`)
 
-      // Set up automatic execution cleanup only for non-manual executions or auto-stop manual executions
+      // Set up automatic execution cleanup only for non-manual executions or auto_stop manual executions
       let executionTimeout: NodeJS.Timeout | null = null
       if (!isManualExecution || testExecutionBehavior === 'auto_stop') {
         executionTimeout = setTimeout(async () => {
@@ -492,9 +491,7 @@ export class WebSocketTrigger implements INodeType {
           return
         }
 
-        console.error(`[DEBUG-TRIGGER] Closing WebSocket server with ID: ${serverId}`)
-        console.error(`[DEBUG-TRIGGER] Close reason: Workflow deactivation or execution end`)
-        console.error(`[DEBUG-TRIGGER] Server sharing mode: ${serverSharing}`)
+        console.error(`[DEBUG-TRIGGER] Starting closeFunction for server ${serverId}`)
 
         // Mark cleanup as executed to prevent race conditions
         cleanupExecuted = true
@@ -520,6 +517,9 @@ export class WebSocketTrigger implements INodeType {
         if (context.listeners && context.listeners[serverId]) {
           context.listeners[serverId].delete(executeTrigger)
           console.error(`[DEBUG-TRIGGER] Removed listener for server ${serverId}`)
+          if (context.listeners[serverId].size === 0) {
+            delete context.listeners[serverId]
+          }
         }
 
         // Update context to mark server as inactive
@@ -536,20 +536,18 @@ export class WebSocketTrigger implements INodeType {
         // Check if this is a manual execution
         const isManualExecution = triggerContext.getMode() === 'manual'
         
-        // Determine close behavior based on server sharing mode and execution type
+        // Determine close behavior based on execution type and settings
         let shouldForceClose = false
         let closeReason = 'workflow_deactivation'
 
-        if (isManualExecution && testExecutionBehavior === 'auto_stop') {
-          // Force close for manual executions with auto-stop
-          shouldForceClose = true
-          closeReason = 'manual_execution_finished'
-          console.error(`[DEBUG-TRIGGER] Manual execution with auto-stop: Force closing server`)
-        } else if (isManualExecution && testExecutionBehavior === 'keep_listening') {
-          // Don't force close for manual executions with keep_listening
+        if (isManualExecution && testExecutionBehavior === 'keep_listening') {
           shouldForceClose = false
           closeReason = 'manual_execution_keep_listening'
           console.error(`[DEBUG-TRIGGER] Manual execution with keep_listening: Keeping server alive`)
+        } else if (isManualExecution) {
+          shouldForceClose = true
+          closeReason = 'manual_execution_finished'
+          console.error(`[DEBUG-TRIGGER] Manual execution with auto_stop: Force closing server`)
         } else if (serverSharing === 'exclusive') {
           // In exclusive mode, always close the server when workflow deactivates
           shouldForceClose = true
@@ -565,6 +563,15 @@ export class WebSocketTrigger implements INodeType {
 
         console.error(`[DEBUG-TRIGGER] Close decision: Force close = ${shouldForceClose}, Reason = ${closeReason}`)
 
+        // New logic: In test mode (manual execution), wait for workflow to finish by awaiting pending sends
+        if (isManualExecution && shouldForceClose) {
+          console.error(`[DEBUG-TRIGGER] Waiting for pending sends to complete before closing in manual mode`)
+          const pending: Promise<void>[] = context.pendingSends.get(serverId) || []
+          //await Promise.allSettled(pending)
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          console.error(`[DEBUG-TRIGGER] All pending sends completed (${pending.length} operations)`)
+        }
+
         await registry.closeServer(serverId, {
           keepClientsAlive: !shouldForceClose,
           executionId,
@@ -573,6 +580,8 @@ export class WebSocketTrigger implements INodeType {
 
         if (shouldForceClose) {
           console.error(`[DEBUG-TRIGGER] Server completely closed due to: ${closeReason}`)
+          // Clear pending sends after close
+          context.pendingSends.delete(serverId)
         } else {
           console.error(`[DEBUG-TRIGGER] Server soft-closed, connections maintained for other workflows`)
         }
@@ -597,6 +606,7 @@ export class WebSocketTrigger implements INodeType {
       // Clean up on error
       context.activeWorkflows.delete(safeWorkflowId)
       context.cleanupTimeouts.delete(cleanupKey)
+      context.pendingSends.delete(serverId)
       throw error
     }
   }
